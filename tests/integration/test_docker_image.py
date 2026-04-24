@@ -36,7 +36,7 @@ def docker_emulator():
             "--rm",
             "-d",
             "-e",
-            "SERVICES=dummy",
+            "SERVICES=gcs",
             "-p",
             "4510:4510",
             IMAGE,
@@ -65,4 +65,4 @@ def test_docker_image_health(docker_emulator):
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert "dummy" in body["services"]
+    assert "gcs" in body["services"]
