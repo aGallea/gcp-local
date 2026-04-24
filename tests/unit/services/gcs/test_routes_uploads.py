@@ -115,3 +115,102 @@ async def test_precondition_if_generation_match_zero_blocks_overwrite(wired):
     )
     assert r.status_code == 412
     assert r.json()["error"]["errors"][0]["reason"] == "conditionNotMet"
+
+
+async def test_resumable_init_returns_location_header(wired):
+    c, _, _ = wired
+    r = await c.post(
+        "/upload/storage/v1/b/b/o",
+        params={"uploadType": "resumable", "name": "big.bin"},
+        content=b"",
+        headers={
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Upload-Content-Type": "application/octet-stream",
+        },
+    )
+    assert r.status_code == 200
+    assert "location" in {k.lower() for k in r.headers}
+    loc = r.headers.get("Location") or r.headers.get("location")
+    assert "upload_id=" in loc
+
+
+async def test_resumable_single_chunk_commit(wired):
+    c, storage, events = wired
+    init = await c.post(
+        "/upload/storage/v1/b/b/o",
+        params={"uploadType": "resumable", "name": "big.bin"},
+        content=b"",
+        headers={"X-Upload-Content-Type": "application/octet-stream"},
+    )
+    loc = init.headers.get("Location") or init.headers.get("location")
+    data = b"x" * 100
+    r = await c.put(
+        loc,
+        content=data,
+        headers={
+            "Content-Length": str(len(data)),
+            "Content-Range": f"bytes 0-{len(data)-1}/{len(data)}",
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "big.bin"
+    assert body["size"] == 100
+    stored = await storage.get_object_bytes("b", "big.bin")
+    assert stored == data
+    assert len(events) == 1
+
+
+async def test_resumable_multi_chunk(wired):
+    c, storage, _ = wired
+    init = await c.post(
+        "/upload/storage/v1/b/b/o",
+        params={"uploadType": "resumable", "name": "multi.bin"},
+        content=b"",
+    )
+    loc = init.headers.get("Location") or init.headers.get("location")
+    chunk1, chunk2 = b"A" * 30, b"B" * 40
+    total = len(chunk1) + len(chunk2)
+    r1 = await c.put(
+        loc,
+        content=chunk1,
+        headers={"Content-Range": f"bytes 0-{len(chunk1)-1}/*"},
+    )
+    assert r1.status_code == 308
+    assert r1.headers["range"].lower() in ("bytes=0-29",)
+    r2 = await c.put(
+        loc,
+        content=chunk2,
+        headers={
+            "Content-Range": f"bytes {len(chunk1)}-{total-1}/{total}",
+        },
+    )
+    assert r2.status_code == 200
+    stored = await storage.get_object_bytes("b", "multi.bin")
+    assert stored == chunk1 + chunk2
+
+
+async def test_resumable_status_query(wired):
+    c, _, _ = wired
+    init = await c.post(
+        "/upload/storage/v1/b/b/o",
+        params={"uploadType": "resumable", "name": "q.bin"},
+        content=b"",
+    )
+    loc = init.headers.get("Location") or init.headers.get("location")
+    # Upload first chunk
+    await c.put(loc, content=b"hello", headers={"Content-Range": "bytes 0-4/*"})
+    # Status query
+    r = await c.put(loc, content=b"", headers={"Content-Range": "bytes */*"})
+    assert r.status_code == 308
+    assert r.headers["range"].lower() == "bytes=0-4"
+
+
+async def test_resumable_unknown_session_404(wired):
+    c, _, _ = wired
+    r = await c.put(
+        "/upload/storage/v1/b/b/o?upload_id=does-not-exist",
+        content=b"abc",
+        headers={"Content-Range": "bytes 0-2/3"},
+    )
+    assert r.status_code == 404

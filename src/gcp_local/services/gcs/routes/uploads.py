@@ -1,10 +1,11 @@
+import contextlib
 import json
 from email.parser import BytesParser
 from email.policy import compat32
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from gcp_local.core.state_hub import StateHub
 from gcp_local.services.gcs.errors import error_response
@@ -13,9 +14,10 @@ from gcp_local.services.gcs.ids import (
     GenerationCounter,
     compute_crc32c_b64,
     compute_md5_b64,
+    new_session_id,
     rfc3339_now,
 )
-from gcp_local.services.gcs.models import ObjectRecord
+from gcp_local.services.gcs.models import ObjectRecord, UploadSession
 from gcp_local.services.gcs.preconditions import (
     PreconditionFailed,
     Preconditions,
@@ -26,6 +28,7 @@ from gcp_local.services.gcs.storage import (
     GcsStorage,
     ObjectCollision,
     ObjectNotFound,
+    SessionNotFound,
 )
 
 
@@ -162,7 +165,48 @@ def register_upload_routes(
                 )
                 return JSONResponse(record.model_dump(by_alias=True))
 
-            # uploadType=resumable handled in Task 11
+            if uploadType == "resumable":
+                if not name:
+                    return error_response(400, "invalid", "missing object name")
+                ct = request.headers.get(
+                    "x-upload-content-type",
+                    request.headers.get("content-type", "application/octet-stream"),
+                )
+                body_bytes = await request.body()
+                user_metadata: dict[str, str] = {}
+                init_content_type = ct
+                init_name = name
+                if body_bytes:
+                    try:
+                        init_body = json.loads(body_bytes)
+                        init_name = init_body.get("name", name)
+                        init_content_type = init_body.get("contentType", ct)
+                        user_metadata = init_body.get("metadata", {})
+                    except json.JSONDecodeError:
+                        pass
+                session_id = new_session_id()
+                total = request.headers.get("x-upload-content-length")
+                total_size = int(total) if total else None
+                now = rfc3339_now()
+                sess = UploadSession(
+                    session_id=session_id,
+                    bucket=bucket,
+                    object_name=init_name,
+                    total_size=total_size,
+                    bytes_received=0,
+                    content_type=init_content_type,
+                    user_metadata=user_metadata,
+                    created_at=now,
+                    last_chunk_at=now,
+                )
+                await storage.put_session(sess)
+                location = f"/upload/storage/v1/b/{bucket}/o?upload_id={session_id}"
+                return JSONResponse(
+                    {"uploadId": session_id},
+                    status_code=200,
+                    headers={"Location": location},
+                )
+
             return error_response(400, "invalid", f"unsupported uploadType: {uploadType}")
         except BucketNotFound:
             return error_response(404, "notFound", f"bucket {bucket!r} not found")
@@ -170,3 +214,89 @@ def register_upload_routes(
             return error_response(412, "conditionNotMet", str(e))
         except ObjectCollision as e:
             return error_response(409, "conflict", str(e))
+
+    @router.put("/upload/storage/v1/b/{bucket}/o")
+    async def resumable_chunk(
+        bucket: str,
+        request: Request,
+        upload_id: str = Query(..., alias="upload_id"),
+    ) -> Response:
+        try:
+            sess = await storage.get_session(upload_id)
+        except SessionNotFound:
+            return error_response(404, "notFound", f"upload session {upload_id!r} not found")
+
+        cr = request.headers.get("content-range", "")
+        # Status query: "bytes */*"
+        if cr == "bytes */*":
+            headers: dict[str, str] = {}
+            if sess.bytes_received > 0:
+                end = sess.bytes_received - 1
+                headers["Range"] = f"bytes=0-{end}"
+            return Response(status_code=308, headers=headers)
+
+        # Chunk upload: "bytes N-M/total" or "bytes N-M/*"
+        if not cr.startswith("bytes "):
+            return error_response(400, "invalid", "missing or malformed Content-Range header")
+        spec = cr[len("bytes ") :]
+        range_part, _, total_part = spec.partition("/")
+        try:
+            start, end = (int(x) for x in range_part.split("-"))
+        except ValueError:
+            return error_response(400, "invalid", f"bad Content-Range: {cr}")
+        if start != sess.bytes_received:
+            return error_response(
+                400,
+                "invalid",
+                f"chunk starts at {start}, expected {sess.bytes_received}",
+            )
+
+        chunk = await request.body()
+        if len(chunk) != (end - start + 1):
+            return error_response(
+                400,
+                "invalid",
+                f"chunk length {len(chunk)} does not match range {range_part}",
+            )
+
+        await storage.append_to_session(upload_id, chunk)
+        sess = await storage.get_session(upload_id)
+
+        total_known: int | None
+        if total_part == "*":
+            total_known = None
+        else:
+            try:
+                total_known = int(total_part)
+            except ValueError:
+                return error_response(400, "invalid", f"bad total: {total_part}")
+
+        is_final = total_known is not None and sess.bytes_received >= total_known
+        if not is_final:
+            return Response(
+                status_code=308,
+                headers={"Range": f"bytes=0-{sess.bytes_received - 1}"},
+            )
+
+        data = await storage.get_session_bytes(upload_id)
+        try:
+            record = await _finalize_object(
+                storage=storage,
+                generations=generations,
+                state_hub=state_hub,
+                bucket=sess.bucket,
+                name=sess.object_name,
+                data=data,
+                content_type=sess.content_type,
+                user_metadata=dict(sess.user_metadata),
+                preconditions=Preconditions(),
+            )
+        except BucketNotFound:
+            return error_response(404, "notFound", f"bucket {sess.bucket!r} not found")
+        except ObjectCollision as e:
+            return error_response(409, "conflict", str(e))
+        finally:
+            with contextlib.suppress(SessionNotFound):
+                await storage.delete_session(upload_id)
+
+        return JSONResponse(record.model_dump(by_alias=True))
