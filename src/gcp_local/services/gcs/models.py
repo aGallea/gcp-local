@@ -12,21 +12,21 @@ class BucketMeta(BaseModel):
 
 
 class ObjectRecord(BaseModel):
-    model_config = ConfigDict(frozen=False)
+    model_config = ConfigDict(frozen=False, populate_by_name=True)
 
     bucket: str
     name: str
     size: int
     generation: int
     metageneration: int
-    content_type: str = "application/octet-stream"
-    content_encoding: str = ""
-    content_language: str = ""
-    content_disposition: str = ""
-    cache_control: str = ""
-    md5_hash: str
+    content_type: str = Field(default="application/octet-stream", serialization_alias="contentType")
+    content_encoding: str = Field(default="", serialization_alias="contentEncoding")
+    content_language: str = Field(default="", serialization_alias="contentLanguage")
+    content_disposition: str = Field(default="", serialization_alias="contentDisposition")
+    cache_control: str = Field(default="", serialization_alias="cacheControl")
+    md5_hash: str = Field(serialization_alias="md5Hash")
     crc32c: str
-    time_created: str
+    time_created: str = Field(serialization_alias="timeCreated")
     updated: str
     metadata: dict[str, str] = Field(default_factory=dict)
 
