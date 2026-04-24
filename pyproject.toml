@@ -20,6 +20,8 @@ dependencies = [
     "uvicorn>=0.27",
     "pydantic>=2.6",
     "google-crc32c>=1.5",
+    "grpcio>=1.60",
+    "googleapis-common-protos>=1.63",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +36,8 @@ dev = [
     "google-cloud-pubsub>=2.19",
     "google-cloud-firestore>=2.14",
     "google-cloud-secret-manager>=2.18",
+    "grpcio-tools>=1.60",
+    "types-grpcio>=1.0.0",
 ]
 
 [project.scripts]
