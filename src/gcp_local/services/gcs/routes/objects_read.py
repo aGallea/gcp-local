@@ -107,6 +107,16 @@ def register_object_read_routes(
             media_type=record.content_type,
         )
 
+    @router.get("/download/storage/v1/b/{bucket}/o/{name:path}")
+    async def download_object(
+        bucket: str,
+        name: str,
+        alt: str = "media",
+        range_header: str | None = Header(default=None, alias="Range"),
+    ) -> Response:
+        """Download endpoint used by the google-cloud-storage client library."""
+        return await get_object(bucket, name, alt=alt, range_header=range_header)
+
     @router.delete("/storage/v1/b/{bucket}/o/{name:path}")
     async def delete_object(bucket: str, name: str) -> Response:
         try:

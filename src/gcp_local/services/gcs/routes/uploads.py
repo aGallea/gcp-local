@@ -166,8 +166,6 @@ def register_upload_routes(
                 return JSONResponse(record.model_dump(by_alias=True))
 
             if uploadType == "resumable":
-                if not name:
-                    return error_response(400, "invalid", "missing object name")
                 ct = request.headers.get(
                     "x-upload-content-type",
                     request.headers.get("content-type", "application/octet-stream"),
@@ -184,6 +182,8 @@ def register_upload_routes(
                         user_metadata = init_body.get("metadata", {})
                     except json.JSONDecodeError:
                         pass
+                if not init_name:
+                    return error_response(400, "invalid", "missing object name")
                 session_id = new_session_id()
                 total = request.headers.get("x-upload-content-length")
                 total_size = int(total) if total else None
@@ -200,7 +200,8 @@ def register_upload_routes(
                     last_chunk_at=now,
                 )
                 await storage.put_session(sess)
-                location = f"/upload/storage/v1/b/{bucket}/o?upload_id={session_id}"
+                base_url = str(request.base_url).rstrip("/")
+                location = f"{base_url}/upload/storage/v1/b/{bucket}/o?upload_id={session_id}"
                 return JSONResponse(
                     {"uploadId": session_id},
                     status_code=200,
