@@ -13,10 +13,14 @@ from gcp_local.services.gcs.models import ObjectRecord
 
 def make_rec() -> ObjectRecord:
     return ObjectRecord(
-        bucket="b", name="o", size=10,
-        generation=1, metageneration=1,
+        bucket="b",
+        name="o",
+        size=10,
+        generation=1,
+        metageneration=1,
         content_type="text/plain",
-        md5_hash="abc", crc32c="xyz",
+        md5_hash="abc",
+        crc32c="xyz",
         time_created="2026-04-24T00:00:00Z",
         updated="2026-04-24T00:00:00Z",
         metadata={"k": "v"},
