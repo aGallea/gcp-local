@@ -45,6 +45,7 @@ gcp-local = "gcp_local.cli:entrypoint"
 
 [project.entry-points."gcp_local.services"]
 gcs = "gcp_local.services.gcs:GcsService"
+secret_manager = "gcp_local.services.secret_manager:SecretManagerService"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gcp_local"]

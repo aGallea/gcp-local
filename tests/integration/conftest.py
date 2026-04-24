@@ -9,6 +9,7 @@ import pytest_asyncio
 from gcp_local.cli import Settings, run
 from gcp_local.core.registry import ServiceRegistry
 from gcp_local.services.gcs import GcsService
+from gcp_local.services.secret_manager import SecretManagerService
 
 
 def _free_port() -> int:
@@ -32,24 +33,31 @@ async def _wait_for_port(port: int, timeout: float = 5.0) -> None:
 
 @pytest_asyncio.fixture
 async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
-    """Boot the emulator in-process with the GCS service on a free port."""
+    """Boot the emulator in-process with gcs + secret_manager on free ports."""
     registry = ServiceRegistry()
     registry.register("gcs", GcsService)
+    registry.register("secret_manager", SecretManagerService)
 
     admin_port = _free_port()
     gcs_port = _free_port()
+    secret_manager_port = _free_port()
     settings = Settings(
-        services=["gcs"],
+        services=["gcs", "secret_manager"],
         persist=False,
         data_dir=tmp_path,
         admin_port=admin_port,
-        port_overrides={"gcs": gcs_port},
+        port_overrides={"gcs": gcs_port, "secret_manager": secret_manager_port},
     )
     task = asyncio.create_task(run(registry, settings), name="emulator")
     try:
         await _wait_for_port(admin_port)
         await _wait_for_port(gcs_port)
-        yield {"admin_port": admin_port, "gcs_port": gcs_port}
+        await _wait_for_port(secret_manager_port)
+        yield {
+            "admin_port": admin_port,
+            "gcs_port": gcs_port,
+            "secret_manager_port": secret_manager_port,
+        }
     finally:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
