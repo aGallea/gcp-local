@@ -26,9 +26,7 @@ def register_copy_compose_routes(
     state_hub: StateHub | None,
     generations: GenerationCounter,
 ) -> None:
-    @router.post(
-        "/storage/v1/b/{src_bucket}/o/{src_name}/copyTo/b/{dst_bucket}/o/{dst_name:path}"
-    )
+    @router.post("/storage/v1/b/{src_bucket}/o/{src_name}/copyTo/b/{dst_bucket}/o/{dst_name:path}")
     async def copy_object(
         src_bucket: str,
         src_name: str,

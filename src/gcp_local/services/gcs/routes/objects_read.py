@@ -24,7 +24,7 @@ def _decode_page_token(token: str) -> str:
 def _parse_range(header: str, size: int) -> tuple[int, int] | None:
     if not header.startswith("bytes="):
         return None
-    rng = header[len("bytes="):]
+    rng = header[len("bytes=") :]
     if "-" not in rng:
         return None
     lo_s, hi_s = rng.split("-", 1)
@@ -61,7 +61,7 @@ def register_object_read_routes(
         except BucketNotFound:
             return error_response(404, "notFound", f"bucket {bucket!r} not found")
 
-        body: dict = {
+        body: dict[str, object] = {
             "items": [o.model_dump(by_alias=True) for o in objects],
         }
         if prefixes:
@@ -93,7 +93,7 @@ def register_object_read_routes(
             if parsed is None:
                 return error_response(416, "invalid", "range not satisfiable")
             lo, hi = parsed
-            partial = data[lo: hi + 1]
+            partial = data[lo : hi + 1]
             return Response(
                 content=partial,
                 status_code=206,

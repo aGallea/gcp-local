@@ -11,11 +11,16 @@ from gcp_local.services.gcs.storage import InMemoryStorage
 
 def rec(name="o", bucket="b", size=5, gen=1) -> ObjectRecord:
     return ObjectRecord(
-        bucket=bucket, name=name, size=size,
-        generation=gen, metageneration=1,
+        bucket=bucket,
+        name=name,
+        size=size,
+        generation=gen,
+        metageneration=1,
         content_type="text/plain",
-        md5_hash="", crc32c="",
-        time_created="t", updated="t",
+        md5_hash="",
+        crc32c="",
+        time_created="t",
+        updated="t",
     )
 
 
@@ -28,9 +33,9 @@ async def client():
     await storage.put_object(rec(bucket="src", name="part1", size=3), b"abc")
     await storage.put_object(rec(bucket="src", name="part2", size=3), b"def")
     app = FastAPI()
-    app.include_router(build_router(
-        storage=storage, state_hub=StateHub(), generations=GenerationCounter()
-    ))
+    app.include_router(
+        build_router(storage=storage, state_hub=StateHub(), generations=GenerationCounter())
+    )
     yield AsyncClient(transport=ASGITransport(app=app), base_url="http://test"), storage
 
 

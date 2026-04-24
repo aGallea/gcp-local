@@ -149,7 +149,7 @@ async def test_resumable_single_chunk_commit(wired):
         content=data,
         headers={
             "Content-Length": str(len(data)),
-            "Content-Range": f"bytes 0-{len(data)-1}/{len(data)}",
+            "Content-Range": f"bytes 0-{len(data) - 1}/{len(data)}",
         },
     )
     assert r.status_code == 200
@@ -174,7 +174,7 @@ async def test_resumable_multi_chunk(wired):
     r1 = await c.put(
         loc,
         content=chunk1,
-        headers={"Content-Range": f"bytes 0-{len(chunk1)-1}/*"},
+        headers={"Content-Range": f"bytes 0-{len(chunk1) - 1}/*"},
     )
     assert r1.status_code == 308
     assert r1.headers["range"].lower() in ("bytes=0-29",)
@@ -182,7 +182,7 @@ async def test_resumable_multi_chunk(wired):
         loc,
         content=chunk2,
         headers={
-            "Content-Range": f"bytes {len(chunk1)}-{total-1}/{total}",
+            "Content-Range": f"bytes {len(chunk1)}-{total - 1}/{total}",
         },
     )
     assert r2.status_code == 200

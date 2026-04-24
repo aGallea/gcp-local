@@ -35,6 +35,8 @@ class GcsService:
     async def start(self, ctx: Context) -> None:
         self._ctx = ctx
         self._storage = self._make_storage(ctx)
+        if isinstance(self._storage, DiskStorage):
+            await self._storage.gc_stale_sessions(max_age_seconds=7 * 86400)
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._app = self._build_app()
         self._server = uvicorn.Server(

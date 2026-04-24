@@ -20,10 +20,6 @@ def build_router(
     register_bucket_routes(r, storage=storage)
     register_object_read_routes(r, storage=storage, state_hub=state_hub)
     register_object_write_routes(r, storage=storage, state_hub=state_hub)
-    register_upload_routes(
-        r, storage=storage, state_hub=state_hub, generations=generations
-    )
-    register_copy_compose_routes(
-        r, storage=storage, state_hub=state_hub, generations=generations
-    )
+    register_upload_routes(r, storage=storage, state_hub=state_hub, generations=generations)
+    register_copy_compose_routes(r, storage=storage, state_hub=state_hub, generations=generations)
     return r
