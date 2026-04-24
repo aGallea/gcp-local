@@ -21,9 +21,7 @@ def _docker_available() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _docker_available(), reason="docker daemon not available"
-)
+pytestmark = pytest.mark.skipif(not _docker_available(), reason="docker daemon not available")
 
 IMAGE = "gcp-local:dev"
 
@@ -33,9 +31,14 @@ def docker_emulator():
     # Assumes the image has already been built. CI builds it before running tests.
     cid = subprocess.check_output(
         [
-            "docker", "run", "--rm", "-d",
-            "-e", "SERVICES=dummy",
-            "-p", "4510:4510",
+            "docker",
+            "run",
+            "--rm",
+            "-d",
+            "-e",
+            "SERVICES=dummy",
+            "-p",
+            "4510:4510",
             IMAGE,
         ],
         text=True,

@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 import pytest
 
 from gcp_local.core.registry import ServiceRegistry, UnknownServiceError
@@ -6,7 +8,7 @@ from gcp_local.core.service import HealthStatus, Port
 
 class FakeA:
     name = "a"
-    default_ports = [Port(1, "rest")]
+    default_ports: ClassVar[list[Port]] = [Port(1, "rest")]
 
     async def start(self, ctx): ...
     async def stop(self): ...
@@ -17,7 +19,7 @@ class FakeA:
 
 class FakeB:
     name = "b"
-    default_ports = [Port(2, "grpc")]
+    default_ports: ClassVar[list[Port]] = [Port(2, "grpc")]
 
     async def start(self, ctx): ...
     async def stop(self): ...

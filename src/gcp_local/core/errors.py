@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Any
 
 _HTTP_TO_STATUS: dict[int, str] = {
     400: "INVALID_ARGUMENT",
@@ -26,7 +27,7 @@ class GcpError(Exception):
         return f"{self.code} {self.reason}: {self.message}"
 
 
-def rest_error_body(err: GcpError) -> dict:
+def rest_error_body(err: GcpError) -> dict[str, Any]:
     """Build the JSON body in the shape `google-api-core` expects.
 
     Shape matches the `googleapiclient`-style error envelope:

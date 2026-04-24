@@ -1,11 +1,12 @@
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 log = logging.getLogger(__name__)
 
-Handler = Callable[[dict], Awaitable[None]]
+Handler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class StateHub:
@@ -17,7 +18,7 @@ class StateHub:
     def subscribe(self, topic: str, handler: Handler) -> None:
         self._subs[topic].append(handler)
 
-    async def publish(self, topic: str, event: dict) -> None:
+    async def publish(self, topic: str, event: dict[str, Any]) -> None:
         handlers = list(self._subs.get(topic, ()))
         if not handlers:
             return
@@ -27,7 +28,7 @@ class StateHub:
         )
         del results
 
-    async def _safe(self, handler: Handler, event: dict) -> None:
+    async def _safe(self, handler: Handler, event: dict[str, Any]) -> None:
         try:
             await handler(event)
         except Exception:

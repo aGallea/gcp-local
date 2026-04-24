@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Protocol, TYPE_CHECKING, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from gcp_local.core.context import Context

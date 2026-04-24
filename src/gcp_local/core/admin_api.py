@@ -17,8 +17,7 @@ def build_admin_app(lc: Lifecycle) -> FastAPI:
             {
                 "ok": overall,
                 "services": {
-                    name: {"ok": s.ok, "message": s.message}
-                    for name, s in statuses.items()
+                    name: {"ok": s.ok, "message": s.message} for name, s in statuses.items()
                 },
             }
         )
@@ -30,8 +29,7 @@ def build_admin_app(lc: Lifecycle) -> FastAPI:
                 {
                     "name": s.name,
                     "ports": [
-                        {"number": p.number, "protocol": p.protocol}
-                        for p in s.default_ports
+                        {"number": p.number, "protocol": p.protocol} for p in s.default_ports
                     ],
                 }
                 for s in lc.services
@@ -46,9 +44,7 @@ def build_admin_app(lc: Lifecycle) -> FastAPI:
             try:
                 await lc.reset(service)
             except KeyError:
-                raise HTTPException(
-                    status_code=404, detail=f"unknown service: {service}"
-                ) from None
+                raise HTTPException(status_code=404, detail=f"unknown service: {service}") from None
         return Response(status_code=204)
 
     return app

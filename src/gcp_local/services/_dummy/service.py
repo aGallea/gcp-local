@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from gcp_local.core.context import Context
 from gcp_local.core.service import HealthStatus, Port
 
@@ -9,7 +11,7 @@ class DummyService:
     """
 
     name = "dummy"
-    default_ports = [Port(4599, "rest")]
+    default_ports: ClassVar[list[Port]] = [Port(4599, "rest")]
 
     def __init__(self) -> None:
         self._started = False

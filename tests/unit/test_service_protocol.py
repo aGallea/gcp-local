@@ -1,9 +1,11 @@
+from typing import ClassVar
+
 from gcp_local.core.service import HealthStatus, Port, Service
 
 
 class GoodService:
     name = "good"
-    default_ports = [Port(1234, "rest")]
+    default_ports: ClassVar[list[Port]] = [Port(1234, "rest")]
 
     async def start(self, ctx):
         return None

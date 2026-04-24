@@ -1,11 +1,12 @@
 import asyncio
+import contextlib
 import logging
 import os
 import signal
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 import uvicorn
 
@@ -84,16 +85,12 @@ async def run(registry: ServiceRegistry, settings: Settings) -> int:
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        with contextlib.suppress(NotImplementedError):  # Windows CI
             loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass  # Windows CI
 
     admin_task = asyncio.create_task(admin_server.serve(), name="admin")
     stop_task = asyncio.create_task(stop_event.wait(), name="stop")
-    done, _ = await asyncio.wait(
-        {admin_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
-    )
+    _done, _ = await asyncio.wait({admin_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
 
     admin_server.should_exit = True
     for t in (admin_task, stop_task):

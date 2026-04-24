@@ -1,15 +1,17 @@
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
-from gcp_local.cli import Settings, build_settings
+from gcp_local.cli import build_settings
 from gcp_local.core.registry import ServiceRegistry, UnknownServiceError
 from gcp_local.core.service import HealthStatus, Port
 
 
 class Svc:
     name = ""
-    default_ports = [Port(1, "rest")]
+    default_ports: ClassVar[list[Port]] = [Port(1, "rest")]
+
     async def start(self, ctx): ...
     async def stop(self): ...
     async def reset_state(self): ...
