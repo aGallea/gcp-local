@@ -1,5 +1,6 @@
 target-version = "py313"
 line-length = 100
+extend-exclude = ["src/gcp_local/generated"]
 
 [lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
