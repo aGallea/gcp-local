@@ -6,7 +6,7 @@
 
 **Architecture:** Single Python process with pluggable services registered via entry points. Selected by runtime `SERVICES` env var. Each service runs its own listener(s); shared state via an in-process event hub. Admin API on a dedicated port. Docker image is the primary distribution.
 
-**Tech Stack:** Python 3.12, asyncio, FastAPI (admin REST + REST services later), grpcio (later services), pytest + pytest-asyncio, ruff, mypy, Docker (buildx for multi-arch), GitHub Actions.
+**Tech Stack:** Python 3.13, asyncio, FastAPI (admin REST + REST services later), grpcio (later services), pytest + pytest-asyncio, ruff, mypy, Docker (buildx for multi-arch), GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-04-24-gcp-local-core-design.md`
 
@@ -58,12 +58,12 @@ version = "0.0.1"
 description = "Local emulator for Google Cloud Platform services."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 authors = [{ name = "Asaf Gallea" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
     "fastapi>=0.110",
@@ -96,7 +96,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true
 packages = ["gcp_local"]
 mypy_path = "src"
@@ -105,7 +105,7 @@ mypy_path = "src"
 - [ ] **Step 2: Create `ruff.toml`**
 
 ```toml
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 
 [lint]
@@ -1776,7 +1776,7 @@ git commit -m "feat: dummy service and in-process integration harness"
 
 ```dockerfile
 # syntax=docker/dockerfile:1.6
-FROM python:3.12-slim AS base
+FROM python:3.13-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -1941,7 +1941,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
       - run: pip install -e ".[dev]"
       - run: ruff check .
@@ -1956,7 +1956,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest tests/integration -v -k "not docker"
@@ -1971,7 +1971,7 @@ jobs:
         run: docker build -f docker/Dockerfile -t gcp-local:dev .
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
           cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest tests/integration/test_docker_image.py -v

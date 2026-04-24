@@ -310,5 +310,5 @@ In rough priority order:
 
 - Exact list of BQ function shims (refined during BigQuery service spec).
 - Whether to support `SERVICES=all-rest` / `SERVICES=all-grpc` shortcuts (minor UX).
-- Docker base image choice: `python:3.12-slim` vs. `distroless` — decided during packaging work.
+- Docker base image choice: `python:3.13-slim` vs. `distroless` — decided during packaging work.
 - Whether Secret Manager's insecure-channel connection helper should be a Python snippet in docs or a tiny shipped utility module.
