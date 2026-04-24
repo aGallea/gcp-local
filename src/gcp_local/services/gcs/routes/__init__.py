@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from gcp_local.core.state_hub import StateHub
 from gcp_local.services.gcs.ids import GenerationCounter
 from gcp_local.services.gcs.routes.buckets import register_bucket_routes
+from gcp_local.services.gcs.routes.objects_read import register_object_read_routes
 from gcp_local.services.gcs.storage import GcsStorage
 
 
@@ -14,5 +15,5 @@ def build_router(
 ) -> APIRouter:
     r = APIRouter()
     register_bucket_routes(r, storage=storage)
-    # Object / upload routers plug in here in later tasks.
+    register_object_read_routes(r, storage=storage, state_hub=state_hub)
     return r
