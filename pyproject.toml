@@ -19,6 +19,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.27",
     "pydantic>=2.6",
+    "google-crc32c>=1.5",
 ]
 
 [project.optional-dependencies]
@@ -39,7 +40,7 @@ dev = [
 gcp-local = "gcp_local.cli:entrypoint"
 
 [project.entry-points."gcp_local.services"]
-dummy = "gcp_local.services._dummy:DummyService"
+gcs = "gcp_local.services.gcs:GcsService"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gcp_local"]
