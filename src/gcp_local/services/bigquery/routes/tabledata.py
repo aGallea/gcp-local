@@ -1,5 +1,6 @@
 """Streaming inserts: /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}/insertAll."""
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Body
@@ -29,8 +30,26 @@ def _validate_row(payload: dict[str, Any], schema: list[FieldSchema]) -> list[st
     return errors
 
 
+def _coerce_value(value: Any, field: FieldSchema) -> Any:
+    """Adapt one cell to a form DuckDB will accept for the column's type.
+
+    Real BigQuery's `tabledata.insertAll` lets clients send a native dict / list
+    for a `JSON` column; DuckDB's parameter binder doesn't auto-convert those, so
+    we serialize to a JSON string here. REPEATED JSON columns are handled by
+    serializing each element.
+    """
+    if value is None:
+        return None
+    if field.type == "JSON":
+        if field.mode == "REPEATED":
+            return [json.dumps(v) if isinstance(v, dict | list) else v for v in value]
+        if isinstance(value, dict | list):
+            return json.dumps(value)
+    return value
+
+
 def _row_to_values(payload: dict[str, Any], schema: list[FieldSchema]) -> list[Any]:
-    return [payload.get(f.name) for f in schema]
+    return [_coerce_value(payload.get(f.name), f) for f in schema]
 
 
 def build_router(storage: BigQueryStorage) -> APIRouter:

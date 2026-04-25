@@ -104,3 +104,61 @@ def test_insert_all_skip_invalid_inserts_valid_rows(client: TestClient) -> None:
         json={"query": "SELECT count(*) AS c FROM `p.d.t`"},
     ).json()
     assert q["rows"][0]["f"][0]["v"] == "1"
+
+
+@pytest.fixture
+async def json_client() -> AsyncIterator[TestClient]:
+    conn = BigQueryConnection.in_memory()
+    await conn.startup()
+    storage = BigQueryStorage(conn)
+    runner = JobRunner(connection=conn, storage=storage)
+    app = build_app(storage=storage, runner=runner)
+    try:
+        c = TestClient(app)
+        c.post(
+            "/bigquery/v2/projects/p/datasets",
+            json={"datasetReference": {"projectId": "p", "datasetId": "d"}},
+        )
+        c.post(
+            "/bigquery/v2/projects/p/datasets/d/tables",
+            json={
+                "tableReference": {"projectId": "p", "datasetId": "d", "tableId": "j"},
+                "schema": {
+                    "fields": [
+                        {"name": "id", "type": "INT64", "mode": "REQUIRED"},
+                        {"name": "blob", "type": "JSON"},
+                        {"name": "tags", "type": "JSON", "mode": "REPEATED"},
+                    ]
+                },
+            },
+        )
+        yield c
+    finally:
+        await conn.shutdown()
+
+
+def test_insert_all_json_column_accepts_native_dict_and_list(json_client: TestClient) -> None:
+    # Regression: insertAll on a JSON column failed when the client sent a
+    # native dict/list because DuckDB doesn't auto-convert those. We now
+    # serialize on the server side so clients can send the natural shape.
+    r = json_client.post(
+        "/bigquery/v2/projects/p/datasets/d/tables/j/insertAll",
+        json={
+            "rows": [
+                {
+                    "json": {
+                        "id": 1,
+                        "blob": {"a": 1, "b": [2, 3]},
+                        "tags": [{"k": "v1"}, {"k": "v2"}],
+                    }
+                }
+            ]
+        },
+    )
+    assert r.status_code == 200
+    assert r.json() == {"kind": "bigquery#tableDataInsertAllResponse"}
+    q = json_client.post(
+        "/bigquery/v2/projects/p/queries",
+        json={"query": "SELECT count(*) AS c FROM `p.d.j`"},
+    ).json()
+    assert q["rows"][0]["f"][0]["v"] == "1"
