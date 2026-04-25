@@ -68,8 +68,8 @@ print(rows)
 | `SERVICES`                  | all     | Comma-separated list of services to start (e.g. `bigquery,gcs`) |
 | `PERSIST`                   | `0`     | Set to `1` to persist state to `/data/` on disk |
 | `BIGQUERY_EMULATOR_PORT`    | `9050`  | Override the BigQuery service port |
-| `GCS_EMULATOR_PORT`         | `9023`  | Override the GCS service port |
-| `SECRET_MANAGER_EMULATOR_PORT` | `9095` | Override the Secret Manager service port |
+| `GCS_EMULATOR_PORT`         | `4443`  | Override the GCS service port |
+| `SECRET_MANAGER_EMULATOR_PORT` | `8086` | Override the Secret Manager service port |
 
 Reset all state without restarting:
 
