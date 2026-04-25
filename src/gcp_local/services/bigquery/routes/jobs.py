@@ -16,7 +16,7 @@ from gcp_local.services.bigquery.names import (
 from gcp_local.services.bigquery.types import duckdb_value_to_bq_wire
 
 
-def _job_to_api(rec: JobRecord) -> dict[str, Any]:
+def job_to_api(rec: JobRecord) -> dict[str, Any]:
     body: dict[str, Any] = {
         "kind": "bigquery#job",
         "id": f"{rec.project}:{rec.job_id}",
@@ -83,7 +83,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             qcfg = (body.get("configuration") or {}).get("query") or {}
             sql = qcfg.get("query") or ""
             rec = await runner.run_query(project=project, job_id=job_id, sql=sql)
-            return _job_to_api(rec)
+            return job_to_api(rec)
         except InvalidName as e:
             return bigquery_error_response(e).to_response()
 
@@ -93,7 +93,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             validate_project_id(project)
             validate_job_id(job_id)
             rec = await runner.get(project, job_id)
-            return _job_to_api(rec)
+            return job_to_api(rec)
         except (JobNotFound, InvalidName) as e:
             return bigquery_error_response(e).to_response()
 
@@ -104,7 +104,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             recs = await runner.list_jobs(project)
             return {
                 "kind": "bigquery#jobList",
-                "jobs": [_job_to_api(r) for r in recs],
+                "jobs": [job_to_api(r) for r in recs],
             }
         except InvalidName as e:
             return bigquery_error_response(e).to_response()
@@ -115,7 +115,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             validate_project_id(project)
             validate_job_id(job_id)
             rec = await runner.cancel(project, job_id)
-            return {"kind": "bigquery#jobCancelResponse", "job": _job_to_api(rec)}
+            return {"kind": "bigquery#jobCancelResponse", "job": job_to_api(rec)}
         except (JobNotFound, InvalidName) as e:
             return bigquery_error_response(e).to_response()
 

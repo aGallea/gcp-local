@@ -68,3 +68,25 @@ def _build(code: int, message: str, reason: str, status_str: str) -> _Resp:
             }
         },
     )
+
+
+_REASON_TO_STATUS_STR: dict[str, str] = {
+    "notFound": "NOT_FOUND",
+    "duplicate": "ALREADY_EXISTS",
+    "invalid": "INVALID_ARGUMENT",
+    "invalidQuery": "INVALID_ARGUMENT",
+    "internalError": "INTERNAL",
+}
+
+
+def make_error_response(code: int, message: str, reason: str = "invalid") -> JSONResponse:
+    """Build the standard BQ REST error envelope for an ad-hoc HTTP error.
+
+    Mirrors the envelope produced by ``bigquery_error_response`` for known
+    exception types but is suitable for hand-built error paths where there
+    is no exception object (e.g., multipart parse failures, unknown
+    resumable session). The mapping from ``reason`` to ``status`` follows
+    real BigQuery's status strings (NOT_FOUND, ALREADY_EXISTS, etc.).
+    """
+    status_str = _REASON_TO_STATUS_STR.get(reason, reason.upper())
+    return _build(code, message, reason, status_str).to_response()

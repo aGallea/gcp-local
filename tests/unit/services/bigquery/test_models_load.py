@@ -1,7 +1,7 @@
 """JobRecord LOAD-type round-trip + API serialization (Task 2)."""
 
 from gcp_local.services.bigquery.models import JobRecord, job_from_dict, job_to_dict
-from gcp_local.services.bigquery.routes.jobs import _job_to_api
+from gcp_local.services.bigquery.routes.jobs import job_to_api
 
 
 def _load_record(**overrides) -> JobRecord:
@@ -49,7 +49,7 @@ def test_job_record_load_round_trip() -> None:
 
 def test_job_to_api_load_branches_configuration_and_statistics() -> None:
     rec = _load_record()
-    body = _job_to_api(rec)
+    body = job_to_api(rec)
     assert body["configuration"]["jobType"] == "LOAD"
     assert body["configuration"]["load"]["sourceFormat"] == "NEWLINE_DELIMITED_JSON"
     assert "query" not in body["configuration"]
@@ -77,7 +77,7 @@ def test_job_to_api_query_unchanged() -> None:
         error_result=None,
         errors=[],
     )
-    body = _job_to_api(rec)
+    body = job_to_api(rec)
     assert body["configuration"]["query"]["query"] == "SELECT 1"
     assert "load" not in body["configuration"]
     assert body["statistics"]["query"]["statementType"] == "SELECT"

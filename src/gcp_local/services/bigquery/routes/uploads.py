@@ -14,34 +14,19 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Header, Request
-from fastapi.responses import JSONResponse
 
 from gcp_local.services.bigquery.engine.jobs import JobRunner
 from gcp_local.services.bigquery.engine.loads import LoadRunner
-from gcp_local.services.bigquery.errors import bigquery_error_response
+from gcp_local.services.bigquery.errors import bigquery_error_response, make_error_response
 from gcp_local.services.bigquery.names import (
     InvalidName,
     validate_project_id,
 )
+from gcp_local.services.bigquery.routes.jobs import job_to_api
 
 
 class MultipartParseError(ValueError):
     pass
-
-
-def _envelope(status_code: int, message: str, reason: str = "invalid") -> JSONResponse:
-    status_str = "INVALID_ARGUMENT" if reason == "invalid" else reason.upper()
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "error": {
-                "code": status_code,
-                "message": message,
-                "errors": [{"reason": reason, "message": message, "domain": "global"}],
-                "status": status_str,
-            }
-        },
-    )
 
 
 def parse_multipart_related(body: bytes, content_type: str) -> tuple[dict[str, Any], bytes]:
@@ -103,8 +88,8 @@ def build_router(
             )
         if uploadType == "resumable":
             # Resumable handler added in the next task — placeholder for now.
-            return _envelope(400, "resumable uploads not yet implemented")
-        return _envelope(400, f"Unsupported uploadType: {uploadType!r}")
+            return make_error_response(400, "resumable uploads not yet implemented")
+        return make_error_response(400, f"Unsupported uploadType: {uploadType!r}")
 
     return router
 
@@ -120,7 +105,7 @@ async def _handle_multipart(
     try:
         metadata, data = parse_multipart_related(body, content_type)
     except MultipartParseError as e:
-        return _envelope(400, str(e))
+        return make_error_response(400, str(e))
     return await _run_load_and_persist(
         project=project,
         metadata=metadata,
@@ -148,9 +133,7 @@ async def _run_load_and_persist(
         data=data,
     )
     runner.register_external(rec)
-    from gcp_local.services.bigquery.routes.jobs import _job_to_api
-
-    return _job_to_api(rec)
+    return job_to_api(rec)
 
 
 def _gen_job_id() -> str:
