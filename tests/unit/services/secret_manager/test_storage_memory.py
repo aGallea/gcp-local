@@ -2,7 +2,6 @@ import pytest
 
 from gcp_local.services.secret_manager.models import (
     SecretRecord,
-    SecretVersion,
     SecretVersionState,
 )
 from gcp_local.services.secret_manager.storage import (
@@ -16,8 +15,11 @@ from gcp_local.services.secret_manager.storage import (
 
 def make_record(project="p", secret_id="s") -> SecretRecord:
     return SecretRecord(
-        project=project, secret_id=secret_id,
-        labels={}, annotations={}, create_time="t",
+        project=project,
+        secret_id=secret_id,
+        labels={},
+        annotations={},
+        create_time="t",
     )
 
 

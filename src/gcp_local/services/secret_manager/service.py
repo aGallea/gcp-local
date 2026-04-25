@@ -34,7 +34,7 @@ class SecretManagerService:
     async def stop(self) -> None:
         if self._server is not None:
             with contextlib.suppress(Exception):
-                await self._server.stop(grace=5.0)
+                await self._server.stop(grace=None)
         self._started = False
 
     async def reset_state(self) -> None:

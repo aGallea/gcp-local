@@ -90,14 +90,15 @@ async def run(registry: ServiceRegistry, settings: Settings) -> int:
 
     admin_task = asyncio.create_task(admin_server.serve(), name="admin")
     stop_task = asyncio.create_task(stop_event.wait(), name="stop")
-    _done, _ = await asyncio.wait({admin_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
-
-    admin_server.should_exit = True
-    for t in (admin_task, stop_task):
-        if not t.done():
-            t.cancel()
-    await asyncio.gather(admin_task, stop_task, return_exceptions=True)
-    await lc.stop_all()
+    try:
+        await asyncio.wait({admin_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        admin_server.should_exit = True
+        for t in (admin_task, stop_task):
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(admin_task, stop_task, return_exceptions=True)
+        await lc.stop_all()
     return 0
 
 

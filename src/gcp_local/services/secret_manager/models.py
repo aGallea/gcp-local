@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class SecretVersionState(str, Enum):
+class SecretVersionState(StrEnum):
     ENABLED = "ENABLED"
     DISABLED = "DISABLED"
     DESTROYED = "DESTROYED"

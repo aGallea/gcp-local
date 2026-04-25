@@ -22,7 +22,7 @@ def test_parse_version_name():
 
 
 def test_parse_version_name_latest():
-    project, sid, vid = parse_version_name("projects/p1/secrets/x/versions/latest")
+    _project, _sid, vid = parse_version_name("projects/p1/secrets/x/versions/latest")
     assert vid == "latest"
 
 
@@ -35,7 +35,10 @@ def test_build_version_name():
 
 
 def test_build_version_name_latest():
-    assert build_version_name("p1", "my-secret", "latest") == "projects/p1/secrets/my-secret/versions/latest"
+    assert (
+        build_version_name("p1", "my-secret", "latest")
+        == "projects/p1/secrets/my-secret/versions/latest"
+    )
 
 
 def test_parse_secret_name_rejects_malformed():

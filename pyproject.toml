@@ -53,6 +53,10 @@ packages = ["src/gcp_local"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# grpc.aio's __del__ emits a "Event loop is closed" warning during gc that
+# pytest's unraisableexception plugin tries to fingerprint — this slows the
+# suite to a crawl when many gRPC servers are torn down. Disable that plugin.
+addopts = "-p no:unraisableexception"
 
 [tool.mypy]
 python_version = "3.13"
