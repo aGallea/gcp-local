@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from gcp_local.services.bigquery.app import build_app
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
+from gcp_local.services.bigquery.engine.jobs import JobRunner
 from gcp_local.services.bigquery.storage import BigQueryStorage
 
 
@@ -13,7 +14,8 @@ async def client() -> AsyncIterator[TestClient]:
     conn = BigQueryConnection.in_memory()
     await conn.startup()
     storage = BigQueryStorage(conn)
-    app = build_app(storage=storage)
+    runner = JobRunner(connection=conn, storage=storage)
+    app = build_app(storage=storage, runner=runner)
     try:
         c = TestClient(app)
         c.post(
