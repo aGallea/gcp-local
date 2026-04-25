@@ -58,7 +58,7 @@ print(rows)
 | Service        | Status    | Docs |
 |----------------|-----------|------|
 | BigQuery       | Alpha     | [docs/services/bigquery.md](docs/services/bigquery.md) |
-| GCS            | Alpha     | TODO |
+| GCS            | Alpha     | [docs/services/gcs.md](docs/services/gcs.md) |
 | Secret Manager | Alpha     | TODO |
 
 ## Configuration
