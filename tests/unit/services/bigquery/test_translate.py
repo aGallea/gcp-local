@@ -64,3 +64,25 @@ def test_translate_strips_partitioning_clause_in_create_table() -> None:
         FakeCatalog({}),
     )
     assert "PARTITION BY" not in sql.upper()
+
+
+def test_translate_info_schema_tables_two_part() -> None:
+    catalog = FakeCatalog({})
+    sql = translate("SELECT * FROM `my_ds.INFORMATION_SCHEMA.TABLES`", catalog)
+    assert "_gcp_local_meta.tables" in sql
+    assert "dataset_id = 'my_ds'" in sql
+
+
+def test_translate_info_schema_tables_three_part() -> None:
+    catalog = FakeCatalog({})
+    sql = translate("SELECT * FROM `proj.my_ds.INFORMATION_SCHEMA.TABLES`", catalog)
+    assert "_gcp_local_meta.tables" in sql
+    assert "project = 'proj'" in sql
+    assert "dataset_id = 'my_ds'" in sql
+
+
+def test_translate_does_not_reject_column_named_st_address() -> None:
+    # Regression: previous regex matched `st_address` as a banned ST_* function.
+    catalog = FakeCatalog({})
+    sql = translate("SELECT st_address FROM users", catalog)
+    assert "st_address" in sql

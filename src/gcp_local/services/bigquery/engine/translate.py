@@ -37,7 +37,7 @@ def translate(sql: str, catalog: CatalogLookup) -> str:
 
 
 _BANNED = re.compile(
-    r"\b(ML\.[A-Z_]+|ST_[A-Z_]+|DECLARE\s|BEGIN\s|EXCEPTION\s|FOR\s+SYSTEM_TIME\s+AS\s+OF)\b",
+    r"(\bML\.[A-Z_]+\s*\(|\bST_[A-Z_]+\s*\(|\bDECLARE\b|\bBEGIN\b|\bEXCEPTION\b|\bFOR\s+SYSTEM_TIME\s+AS\s+OF\b)",
     re.IGNORECASE,
 )
 
@@ -110,33 +110,39 @@ def _expand_wildcards(tree: exp.Expression, catalog: CatalogLookup) -> exp.Expre
 
 def _rewrite_info_schema(tree: exp.Expression) -> exp.Expression:
     for tbl in list(tree.find_all(exp.Table)):
-        # BQ writes `<dataset>.INFORMATION_SCHEMA.<VIEW>`; sqlglot may parse
-        # `INFORMATION_SCHEMA` as a `db` and the view as `name`, with the
-        # dataset in `catalog`.
-        name = tbl.this.name if isinstance(tbl.this, exp.Identifier) else None
-        db = tbl.args.get("db")
-        catalog = tbl.args.get("catalog")
-        if (
-            name
-            and db is not None
-            and isinstance(db, exp.Identifier)
-            and db.name.upper() == "INFORMATION_SCHEMA"
-        ):
-            dataset = catalog.name if isinstance(catalog, exp.Identifier) else None
-            project = "_unknown"
-            # If the user passed `project.dataset.INFORMATION_SCHEMA.VIEW`
-            # sqlglot puts project in a 4th position; we don't have one here.
-            # The route layer always rewrites bare references with the project
-            # via a `defaultProject` wrap before calling translate(); we trust
-            # `dataset` to be populated.
+        if not isinstance(tbl.this, exp.Identifier):
+            continue
+        name = tbl.this.name
+        if "." not in name or not name.upper().startswith("INFORMATION_SCHEMA."):
+            # Also check the case where INFORMATION_SCHEMA is in `db` (some sqlglot versions)
+            db = tbl.args.get("db")
+            if (
+                db is not None
+                and isinstance(db, exp.Identifier)
+                and db.name.upper() == "INFORMATION_SCHEMA"
+            ):
+                view = name
+                catalog = tbl.args.get("catalog")
+                dataset = catalog.name if isinstance(catalog, exp.Identifier) else None
+                if dataset is None:
+                    continue
+                project = "_unknown"
+            else:
+                continue
+        else:
+            view = name.split(".", 1)[1]
+            db = tbl.args.get("db")
+            catalog = tbl.args.get("catalog")
+            dataset = db.name if isinstance(db, exp.Identifier) else None
+            project = catalog.name if isinstance(catalog, exp.Identifier) else "_unknown"
             if dataset is None:
                 continue
-            try:
-                rewritten = rewrite_info_schema_reference(project, dataset, name)
-            except UnsupportedInfoSchemaView as e:
-                raise UnsupportedSql(str(e)) from None
-            sub = cast(exp.Expression, sqlglot.parse_one(rewritten, read="duckdb"))
-            tbl.replace(exp.Subquery(this=sub, alias=tbl.args.get("alias")))
+        try:
+            rewritten = rewrite_info_schema_reference(project, dataset, view)
+        except UnsupportedInfoSchemaView as e:
+            raise UnsupportedSql(str(e)) from None
+        sub = cast(exp.Expression, sqlglot.parse_one(rewritten, read="duckdb"))
+        tbl.replace(exp.Subquery(this=sub, alias=tbl.args.get("alias")))
     return tree
 
 
