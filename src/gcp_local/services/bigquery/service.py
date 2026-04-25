@@ -94,8 +94,10 @@ class BigQueryService:
         if self._connection is not None:
             await self._connection.reset()
         if self._resumables is not None:
-            # Recreate to clear all sessions.
-            self._resumables = ResumableSessionStore()
+            # Clear in place — the router has captured this exact instance
+            # in its closure, so reassigning would leave the live router
+            # writing to a detached store.
+            self._resumables.clear()
 
     def health(self) -> HealthStatus:
         return HealthStatus(ok=self._started, message="running" if self._started else "stopped")

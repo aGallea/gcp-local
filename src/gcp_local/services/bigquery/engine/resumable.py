@@ -83,6 +83,10 @@ class ResumableSessionStore:
     def drop(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
 
+    def clear(self) -> None:
+        """Drop every session in place (used by service reset_state)."""
+        self._sessions.clear()
+
     def sweep_expired(self, ttl_seconds: float) -> None:
         now = self._clock()
         expired = [

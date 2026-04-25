@@ -237,9 +237,13 @@ async def _handle_resumable_put(
         return make_error_response(400, str(e))
     sess = resumables.get(upload_id)
     if not complete:
+        # received_total can only be 0 if a client sends a zero-length first
+        # chunk, which the BQ resumable spec doesn't allow but we guard against
+        # to avoid emitting an invalid "bytes=0--1" Range header.
+        last_byte = sess.received_total - 1 if sess.received_total > 0 else 0
         return Response(
             status_code=308,
-            headers={"Range": f"bytes=0-{sess.received_total - 1}"},
+            headers={"Range": f"bytes=0-{last_byte}"},
             content=b"",
         )
     metadata = sess.job_config["_metadata"]
