@@ -4,12 +4,15 @@ Spec sections: §6 (source-format parsing), §7 (schema resolution),
 §8 (dispositions), §9 (execution), §10 (job-model integration).
 """
 
+import csv
+import io
 import json
 from typing import Any
 
 from gcp_local.services.bigquery.engine._time import now_epoch_ms_str
 from gcp_local.services.bigquery.engine.autodetect import (
     AutodetectError,
+    autodetect_csv,
     autodetect_ndjson,
 )
 from gcp_local.services.bigquery.engine.coerce import row_to_values, validate_row
@@ -30,6 +33,7 @@ from gcp_local.services.bigquery.types import (
 )
 
 _SUPPORTED_SOURCE_FORMATS = {"NEWLINE_DELIMITED_JSON", "CSV"}
+_SUPPORTED_CSV_ENCODINGS = {"UTF-8", "UTF8", "ISO-8859-1", "LATIN-1"}
 
 
 class LoadRunner:
@@ -57,11 +61,14 @@ class LoadRunner:
                     "invalid",
                     f"Unsupported sourceFormat: {source_format!r}",
                 )
-            rows = await self._parse_data(source_format, data, load_config)
-            schema = await self._resolve_schema(load_config, dest, rows, source_format)
+            if source_format == "NEWLINE_DELIMITED_JSON":
+                rows = _parse_ndjson(data)
+                schema = await self._resolve_schema_ndjson(load_config, dest, rows)
+            else:  # CSV
+                csv_rows, has_header = _parse_csv(data, load_config)
+                schema = await self._resolve_schema_csv(load_config, dest, csv_rows, has_header)
+                rows = _csv_to_dict_rows(csv_rows, has_header, schema)
             await self._ensure_table(dest, schema, load_config)
-            # WRITE_TRUNCATE wraps disposition + insert in a transaction so a
-            # failed insert leaves the original rows intact (spec §8.2).
             disp = (load_config.get("writeDisposition") or "WRITE_APPEND").upper()
             if disp == "WRITE_TRUNCATE":
                 await self._conn.execute("BEGIN")
@@ -94,45 +101,41 @@ class LoadRunner:
             return self._fail(project, job_id, load_config, start, "internalError", str(e))
 
     # ------------------------------------------------------------------
-    # Parsing
-
-    # load_config carries source-format dialect options used by the CSV branch
-    # in Task 5 (fieldDelimiter, quote, skipLeadingRows, etc.); unused for NDJSON.
-    async def _parse_data(
-        self,
-        source_format: str,
-        data: bytes,
-        load_config: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        if source_format == "NEWLINE_DELIMITED_JSON":
-            return _parse_ndjson(data)
-        if source_format == "CSV":
-            # CSV path is added in a later task.
-            raise _LoadError("invalid", "CSV source format not yet implemented")
-        raise _LoadError("invalid", f"Unsupported sourceFormat: {source_format!r}")
-
-    # ------------------------------------------------------------------
     # Schema resolution
 
-    async def _resolve_schema(
+    async def _resolve_schema_ndjson(
         self,
         load_config: dict[str, Any],
         dest: tuple[str, str, str],
         rows: list[dict[str, Any]],
-        source_format: str,
     ) -> list[FieldSchema]:
         explicit = (load_config.get("schema") or {}).get("fields")
         if explicit:
             return parse_table_schema(explicit)
         if load_config.get("autodetect"):
-            if source_format == "NEWLINE_DELIMITED_JSON":
-                return autodetect_ndjson(rows)
-            # CSV autodetect handled in a later task.
-            raise _LoadError("invalid", "CSV autodetect not yet implemented")
-        # Fall back to existing-table schema.
+            return autodetect_ndjson(rows)
         try:
-            existing = await self._storage.get_table(*dest)
-            return existing.schema
+            return (await self._storage.get_table(*dest)).schema
+        except TableNotFound:
+            raise _LoadError(
+                "invalid",
+                "Load configuration must specify schema or autodetect",
+            ) from None
+
+    async def _resolve_schema_csv(
+        self,
+        load_config: dict[str, Any],
+        dest: tuple[str, str, str],
+        csv_rows: list[list[str]],
+        has_header: bool,
+    ) -> list[FieldSchema]:
+        explicit = (load_config.get("schema") or {}).get("fields")
+        if explicit:
+            return parse_table_schema(explicit)
+        if load_config.get("autodetect"):
+            return autodetect_csv(csv_rows, has_header=has_header)
+        try:
+            return (await self._storage.get_table(*dest)).schema
         except TableNotFound:
             raise _LoadError(
                 "invalid",
@@ -347,3 +350,85 @@ def _parse_ndjson(data: bytes) -> list[dict[str, Any]]:
             )
         rows.append(obj)
     return rows
+
+
+_NULL_SENTINEL = object()
+
+
+def _parse_csv(
+    data: bytes,
+    load_config: dict[str, Any],
+) -> tuple[list[list[str]], bool]:
+    encoding = (load_config.get("encoding") or "UTF-8").upper().replace("_", "-")
+    if encoding not in _SUPPORTED_CSV_ENCODINGS:
+        raise _LoadError("invalid", f"Unsupported CSV encoding: {encoding!r}")
+    try:
+        text = data.decode(encoding)
+    except UnicodeDecodeError as e:
+        raise _LoadError("invalid", f"CSV decode failed: {e}") from e
+    delimiter = load_config.get("fieldDelimiter") or ","
+    quotechar = load_config.get("quote") or '"'
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter, quotechar=quotechar)
+    rows = [r for r in reader if r]
+    skip = int(load_config.get("skipLeadingRows") or 0)
+    has_header = skip >= 1
+    if has_header and skip > 1:
+        # BQ semantics: skip N rows total; row 0 is header only when skip==1.
+        # When skip>1, drop those rows entirely (they are pre-header garbage)
+        # and continue treating row N as header.
+        rows = rows[skip - 1:]
+    null_marker = load_config.get("nullMarker") or ""
+    if null_marker:
+        rows = [
+            [_NULL_SENTINEL if c == null_marker else c for c in r]  # type: ignore[misc]
+            for r in rows
+        ]
+    return rows, has_header
+
+
+def _csv_to_dict_rows(
+    csv_rows: list[list[str]],
+    has_header: bool,
+    schema: list[FieldSchema],
+) -> list[dict[str, Any]]:
+    if has_header:
+        header = csv_rows[0]
+        data = csv_rows[1:]
+    else:
+        header = [f.name for f in schema]
+        data = csv_rows
+
+    out: list[dict[str, Any]] = []
+    for row_idx, row in enumerate(data):
+        if len(row) != len(header):
+            raise _LoadError(
+                "invalid",
+                f"CSV row {row_idx} has {len(row)} columns, expected {len(header)}",
+            )
+        payload: dict[str, Any] = {}
+        for col_idx, cell in enumerate(row):
+            name = header[col_idx]
+            if cell is _NULL_SENTINEL:
+                payload[name] = None
+            else:
+                payload[name] = _coerce_csv_cell(cell, name, schema)
+        out.append(payload)
+    return out
+
+
+def _coerce_csv_cell(cell: str, name: str, schema: list[FieldSchema]) -> Any:
+    by_name = {f.name: f for f in schema}
+    field = by_name.get(name)
+    if field is None:
+        return cell
+    if cell == "" and field.mode != "REQUIRED":
+        return None
+    match field.type:
+        case "INT64" | "INTEGER":
+            return int(cell)
+        case "FLOAT64" | "FLOAT" | "NUMERIC" | "BIGNUMERIC":
+            return float(cell)
+        case "BOOL" | "BOOLEAN":
+            return cell.strip().lower() == "true"
+        case _:
+            return cell
