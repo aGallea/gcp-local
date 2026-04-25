@@ -17,7 +17,7 @@ _SCALAR_DDL: dict[str, str] = {
     "BOOL": "BOOLEAN",
     "BOOLEAN": "BOOLEAN",
     "NUMERIC": "DECIMAL(38, 9)",
-    "BIGNUMERIC": "DECIMAL(38, 38)",
+    "BIGNUMERIC": "DECIMAL(38, 18)",
     "DATE": "DATE",
     "TIME": "TIME",
     "TIMESTAMP": "TIMESTAMP WITH TIME ZONE",

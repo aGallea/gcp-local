@@ -106,7 +106,7 @@ def test_ddl_numeric_and_bignumeric() -> None:
     a = FieldSchema(name="a", type="NUMERIC", mode="NULLABLE", fields=None)
     b = FieldSchema(name="b", type="BIGNUMERIC", mode="NULLABLE", fields=None)
     assert bq_field_to_duckdb_ddl(a) == '"a" DECIMAL(38, 9)'
-    assert bq_field_to_duckdb_ddl(b) == '"b" DECIMAL(38, 38)'
+    assert bq_field_to_duckdb_ddl(b) == '"b" DECIMAL(38, 18)'
 
 
 def test_ddl_timestamp_vs_datetime() -> None:
