@@ -55,9 +55,13 @@ class BigQueryConnection:
 
     async def startup(self) -> None:
         loop = asyncio.get_running_loop()
-        self._conn = await loop.run_in_executor(self._executor, duckdb.connect, self._db_path)
-        for ddl in _CATALOG_DDL:
-            await self.execute(ddl)
+        try:
+            self._conn = await loop.run_in_executor(self._executor, duckdb.connect, self._db_path)
+            for ddl in _CATALOG_DDL:
+                await self.execute(ddl)
+        except Exception:
+            self._executor.shutdown(wait=False)
+            raise
 
     async def shutdown(self) -> None:
         if self._conn is not None:
@@ -73,11 +77,7 @@ class BigQueryConnection:
 
     def _sync_execute(self, sql: str, params: list[Any]) -> list[tuple[Any, ...]]:
         assert self._conn is not None
-        cur = self._conn.execute(sql, params)
-        try:
-            return cur.fetchall()
-        except duckdb.InvalidInputException:
-            return []
+        return self._conn.execute(sql, params).fetchall()
 
     async def reset(self) -> None:
         rows = await self.execute("SELECT schema_name FROM information_schema.schemata")
@@ -87,6 +87,6 @@ class BigQueryConnection:
             await self.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         # Drop and recreate the transient jobs schema, plus clear catalog rows.
         await self.execute("DROP SCHEMA IF EXISTS _gcp_local_jobs CASCADE")
-        await self.execute("CREATE SCHEMA _gcp_local_jobs")
+        await self.execute("CREATE SCHEMA IF NOT EXISTS _gcp_local_jobs")
         await self.execute("DELETE FROM _gcp_local_meta.tables")
         await self.execute("DELETE FROM _gcp_local_meta.datasets")
