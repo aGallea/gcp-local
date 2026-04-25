@@ -23,6 +23,9 @@ dependencies = [
     "grpcio>=1.60",
     "googleapis-common-protos>=1.63",
     "grpc-google-iam-v1>=0.13",
+    "duckdb>=0.10",
+    "sqlglot>=23.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -39,6 +42,8 @@ dev = [
     "google-cloud-secret-manager>=2.18",
     "grpcio-tools>=1.60",
     "types-grpcio>=1.0.0",
+    "db-dtypes>=1.2",
+    "pyarrow>=15",
 ]
 
 [project.scripts]
@@ -47,6 +52,7 @@ gcp-local = "gcp_local.cli:entrypoint"
 [project.entry-points."gcp_local.services"]
 gcs = "gcp_local.services.gcs:GcsService"
 secret_manager = "gcp_local.services.secret_manager:SecretManagerService"
+bigquery = "gcp_local.services.bigquery:BigQueryService"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gcp_local"]
