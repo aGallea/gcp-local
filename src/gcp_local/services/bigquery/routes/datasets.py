@@ -1,10 +1,10 @@
 """REST handlers for /bigquery/v2/projects/{project}/datasets/*."""
 
-import datetime as dt
 from typing import Any
 
 from fastapi import APIRouter, Body, Path, Response
 
+from gcp_local.services.bigquery.engine._time import now_epoch_ms_str
 from gcp_local.services.bigquery.errors import (
     InvalidValue,
     bigquery_error_response,
@@ -20,11 +20,6 @@ from gcp_local.services.bigquery.storage import (
     DatasetAlreadyExists,
     DatasetNotFound,
 )
-
-
-def _now_epoch_ms_str() -> str:
-    """Return current time as milliseconds-since-epoch string (BQ REST API format)."""
-    return str(int(dt.datetime.now(tz=dt.UTC).timestamp() * 1000))
 
 
 def _to_api(rec: DatasetRecord) -> dict[str, Any]:
@@ -61,7 +56,7 @@ def build_router(storage: BigQueryStorage) -> APIRouter:
                     f"datasetReference.projectId {ref['projectId']!r} != {project!r}"
                 )
             validate_dataset_id(dataset_id)
-            now = _now_epoch_ms_str()
+            now = now_epoch_ms_str()
             rec = DatasetRecord(
                 project=project,
                 dataset_id=dataset_id,
@@ -128,7 +123,7 @@ def build_router(storage: BigQueryStorage) -> APIRouter:
                 rec.labels = dict(body["labels"] or {})
             if "defaultTableExpirationMs" in body:
                 rec.default_table_expiration_ms = body["defaultTableExpirationMs"]
-            rec.last_modified_time = _now_epoch_ms_str()
+            rec.last_modified_time = now_epoch_ms_str()
             await storage.update_dataset(rec)
             return _to_api(rec)
         except (DatasetNotFound, InvalidName, InvalidValue) as e:

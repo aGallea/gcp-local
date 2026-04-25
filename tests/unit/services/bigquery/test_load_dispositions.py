@@ -130,6 +130,34 @@ async def test_write_empty_against_empty_succeeds(runner: LoadRunner) -> None:
 
 
 @pytest.mark.asyncio
+async def test_write_truncate_rolls_back_on_validation_failure(runner: LoadRunner) -> None:
+    """If the load's INSERT fails after WRITE_TRUNCATE deleted rows,
+    the transaction must roll back so the original rows survive."""
+    await _seed_table(runner._storage, "t_rb")
+    for v in (10, 20, 30):
+        await _insert_one(runner._conn, "t_rb", v)
+    config = {
+        "destinationTable": {"projectId": "p", "datasetId": "d", "tableId": "t_rb"},
+        "sourceFormat": "NEWLINE_DELIMITED_JSON",
+        "writeDisposition": "WRITE_TRUNCATE",
+        "schema": {"fields": SCHEMA_FIELDS},
+    }
+    # Bad row: unknown field forces validate_row to reject the row, aborting
+    # the load after DELETE has run.
+    rec = await runner.run_load(
+        project="p",
+        job_id="j_rb",
+        load_config=config,
+        data=b'{"id": 1, "junk": "x"}\n',
+    )
+    assert rec.error_result is not None
+    assert rec.error_result["reason"] == "invalid"
+    # Original 3 rows must still be present.
+    rows = await runner._conn.execute('SELECT id FROM "p:d"."t_rb" ORDER BY id')
+    assert [r[0] for r in rows] == [10, 20, 30]
+
+
+@pytest.mark.asyncio
 async def test_create_if_needed_uses_existing_table_schema(runner: LoadRunner) -> None:
     """No explicit schema, no autodetect, but the table exists → use it."""
     await _seed_table(runner._storage, "t_existing")

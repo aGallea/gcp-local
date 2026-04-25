@@ -4,10 +4,10 @@ Spec sections: §6 (source-format parsing), §7 (schema resolution),
 §8 (dispositions), §9 (execution), §10 (job-model integration).
 """
 
-import datetime as dt
 import json
 from typing import Any
 
+from gcp_local.services.bigquery.engine._time import now_epoch_ms_str
 from gcp_local.services.bigquery.engine.autodetect import (
     AutodetectError,
     autodetect_ndjson,
@@ -32,10 +32,6 @@ from gcp_local.services.bigquery.types import (
 _SUPPORTED_SOURCE_FORMATS = {"NEWLINE_DELIMITED_JSON", "CSV"}
 
 
-def _now_epoch_ms_str() -> str:
-    return str(int(dt.datetime.now(tz=dt.UTC).timestamp() * 1000))
-
-
 class LoadRunner:
     """Executes load jobs against the shared BigQuery DuckDB connection."""
 
@@ -51,7 +47,7 @@ class LoadRunner:
         load_config: dict[str, Any],
         data: bytes,
     ) -> JobRecord:
-        start = _now_epoch_ms_str()
+        start = now_epoch_ms_str()
         try:
             dest = _require_destination(load_config)
             source_format = (load_config.get("sourceFormat") or "").upper()
@@ -64,8 +60,21 @@ class LoadRunner:
             rows = await self._parse_data(source_format, data, load_config)
             schema = await self._resolve_schema(load_config, dest, rows, source_format)
             await self._ensure_table(dest, schema, load_config)
-            await self._apply_write_disposition(dest, load_config)
-            inserted = await self._insert_rows(dest, schema, rows)
+            # WRITE_TRUNCATE wraps disposition + insert in a transaction so a
+            # failed insert leaves the original rows intact (spec §8.2).
+            disp = (load_config.get("writeDisposition") or "WRITE_APPEND").upper()
+            if disp == "WRITE_TRUNCATE":
+                await self._conn.execute("BEGIN")
+                try:
+                    await self._apply_write_disposition(dest, load_config)
+                    inserted = await self._insert_rows(dest, schema, rows)
+                except Exception:
+                    await self._conn.execute("ROLLBACK")
+                    raise
+                await self._conn.execute("COMMIT")
+            else:
+                await self._apply_write_disposition(dest, load_config)
+                inserted = await self._insert_rows(dest, schema, rows)
             return self._success(
                 project=project,
                 job_id=job_id,
@@ -87,6 +96,8 @@ class LoadRunner:
     # ------------------------------------------------------------------
     # Parsing
 
+    # load_config carries source-format dialect options used by the CSV branch
+    # in Task 5 (fieldDelimiter, quote, skipLeadingRows, etc.); unused for NDJSON.
     async def _parse_data(
         self,
         source_format: str,
@@ -149,7 +160,7 @@ class LoadRunner:
                 f"Not found: Table {dest[0]}:{dest[1]}.{dest[2]}",
             )
         # CREATE_IF_NEEDED: materialize the table now.
-        now = _now_epoch_ms_str()
+        now = now_epoch_ms_str()
         rec = TableRecord(
             project=dest[0],
             dataset_id=dest[1],
@@ -235,7 +246,7 @@ class LoadRunner:
         input_bytes: int,
         output_rows: int,
     ) -> JobRecord:
-        end = _now_epoch_ms_str()
+        end = now_epoch_ms_str()
         return JobRecord(
             project=project,
             job_id=job_id,
@@ -271,7 +282,7 @@ class LoadRunner:
         reason: str,
         message: str,
     ) -> JobRecord:
-        end = _now_epoch_ms_str()
+        end = now_epoch_ms_str()
         err = {"reason": reason, "message": message, "domain": "global"}
         return JobRecord(
             project=project,

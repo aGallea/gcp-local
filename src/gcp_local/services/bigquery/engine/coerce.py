@@ -44,4 +44,9 @@ def coerce_value(value: Any, field: FieldSchema) -> Any:
 
 
 def row_to_values(payload: dict[str, Any], schema: list[FieldSchema]) -> list[Any]:
+    """Return values in schema field order, coercing each via ``coerce_value``.
+
+    Missing keys (fields absent from the payload) yield ``None``. The output is
+    positional and ready to splice into a parameterized ``INSERT ... VALUES``.
+    """
     return [coerce_value(payload.get(f.name), f) for f in schema]
