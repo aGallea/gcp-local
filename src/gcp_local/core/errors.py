@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+import grpc
+
 _HTTP_TO_STATUS: dict[int, str] = {
     400: "INVALID_ARGUMENT",
     401: "UNAUTHENTICATED",
@@ -47,3 +49,13 @@ def rest_error_body(err: GcpError) -> dict[str, Any]:
             "status": _HTTP_TO_STATUS.get(err.code, "UNKNOWN"),
         }
     }
+
+
+@dataclass
+class GrpcError(Exception):
+    code: grpc.StatusCode
+    message: str
+    reason: str | None = None
+
+    def __str__(self) -> str:
+        return f"{self.code.name}: {self.message}"

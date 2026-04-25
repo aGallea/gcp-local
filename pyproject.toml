@@ -20,6 +20,9 @@ dependencies = [
     "uvicorn>=0.27",
     "pydantic>=2.6",
     "google-crc32c>=1.5",
+    "grpcio>=1.60",
+    "googleapis-common-protos>=1.63",
+    "grpc-google-iam-v1>=0.13",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +37,8 @@ dev = [
     "google-cloud-pubsub>=2.19",
     "google-cloud-firestore>=2.14",
     "google-cloud-secret-manager>=2.18",
+    "grpcio-tools>=1.60",
+    "types-grpcio>=1.0.0",
 ]
 
 [project.scripts]
@@ -41,6 +46,7 @@ gcp-local = "gcp_local.cli:entrypoint"
 
 [project.entry-points."gcp_local.services"]
 gcs = "gcp_local.services.gcs:GcsService"
+secret_manager = "gcp_local.services.secret_manager:SecretManagerService"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gcp_local"]
@@ -48,9 +54,18 @@ packages = ["src/gcp_local"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# grpc.aio's __del__ emits a "Event loop is closed" warning during gc that
+# pytest's unraisableexception plugin tries to fingerprint — this slows the
+# suite to a crawl when many gRPC servers are torn down. Disable that plugin.
+addopts = "-p no:unraisableexception"
 
 [tool.mypy]
 python_version = "3.13"
 strict = true
 packages = ["gcp_local"]
 mypy_path = "src"
+exclude = ["src/gcp_local/generated/"]
+
+[[tool.mypy.overrides]]
+module = ["google.protobuf.*"]
+ignore_missing_imports = true
