@@ -105,6 +105,28 @@ def test_jobs_query_parse_error_returns_error_result(client: TestClient) -> None
     assert body["errors"][0]["reason"] == "invalidQuery"
 
 
+def test_jobs_get_query_results_on_dml_job_returns_empty_rows(
+    client: TestClient,
+) -> None:
+    # DML jobs have no result table; getQueryResults must not 500.
+    r = client.post(
+        "/bigquery/v2/projects/p/jobs",
+        json={
+            "jobReference": {"projectId": "p", "jobId": "dml1"},
+            "configuration": {"query": {"query": "INSERT INTO `p.d.t` VALUES (99,'z')"}},
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["status"]["state"] == "DONE"
+
+    r2 = client.get("/bigquery/v2/projects/p/queries/dml1")
+    assert r2.status_code == 200
+    body = r2.json()
+    assert body["jobComplete"] is True
+    assert body["rows"] == []
+    assert body.get("schema", {}).get("fields") == []
+
+
 def test_jobs_get_returns_known_job(client: TestClient) -> None:
     _seed_rows(client)
     client.post(

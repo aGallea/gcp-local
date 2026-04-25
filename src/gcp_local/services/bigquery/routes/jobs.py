@@ -21,7 +21,8 @@ def _job_to_api(rec: JobRecord) -> dict[str, Any]:
         "kind": "bigquery#job",
         "id": f"{rec.project}:{rec.job_id}",
         "jobReference": {"projectId": rec.project, "jobId": rec.job_id},
-        "user_email": rec.user_email,
+        "user_email": rec.user_email,  # snake_case kept for backward-compat with existing tests
+        "userEmail": rec.user_email,
         "configuration": {"query": {"query": rec.sql}, "jobType": rec.job_type},
         "status": {"state": rec.state},
         "statistics": {
@@ -152,17 +153,25 @@ def build_router(runner: JobRunner) -> APIRouter:
             validate_project_id(project)
             validate_job_id(job_id)
             rec = await runner.get(project, job_id)
-            page = await runner.read_page(job_id, page_size=maxResults, page_token=pageToken)
             payload: dict[str, Any] = {
                 "kind": "bigquery#getQueryResultsResponse",
                 "jobReference": {"projectId": project, "jobId": job_id},
                 "jobComplete": True,
                 "totalRows": str(rec.total_rows),
-                "schema": _schema_to_api(page.schema),
-                "rows": _rows_to_wire(page.rows, page.schema),
             }
-            if page.next_page_token is not None:
-                payload["pageToken"] = page.next_page_token
+            if rec.error_result is not None:
+                payload["errors"] = rec.errors
+                return payload
+            if rec.statement_type == "SELECT":
+                page = await runner.read_page(job_id, page_size=maxResults, page_token=pageToken)
+                payload["schema"] = _schema_to_api(page.schema)
+                payload["rows"] = _rows_to_wire(page.rows, page.schema)
+                if page.next_page_token is not None:
+                    payload["pageToken"] = page.next_page_token
+            else:
+                # DML — no rows to return
+                payload["schema"] = {"fields": []}
+                payload["rows"] = []
             return payload
         except (JobNotFound, InvalidName) as e:
             return bigquery_error_response(e).to_response()
