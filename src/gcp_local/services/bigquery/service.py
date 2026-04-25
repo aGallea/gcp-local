@@ -12,6 +12,7 @@ from gcp_local.core.service import HealthStatus, Port
 from gcp_local.services.bigquery.app import build_app
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
 from gcp_local.services.bigquery.engine.jobs import JobRunner
+from gcp_local.services.bigquery.engine.loads import LoadRunner
 from gcp_local.services.bigquery.storage import BigQueryStorage
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class BigQueryService:
         self._connection: BigQueryConnection | None = None
         self._storage: BigQueryStorage | None = None
         self._runner: JobRunner | None = None
+        self._load_runner: LoadRunner | None = None
         self._sweeper_task: asyncio.Task[None] | None = None
         self._started = False
 
@@ -40,8 +42,13 @@ class BigQueryService:
         await self._connection.startup()
         self._storage = BigQueryStorage(self._connection)
         self._runner = JobRunner(connection=self._connection, storage=self._storage)
+        self._load_runner = LoadRunner(connection=self._connection, storage=self._storage)
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
-        self._app = build_app(storage=self._storage, runner=self._runner)
+        self._app = build_app(
+            storage=self._storage,
+            runner=self._runner,
+            load_runner=self._load_runner,
+        )
         self._server = uvicorn.Server(
             uvicorn.Config(
                 self._app,
