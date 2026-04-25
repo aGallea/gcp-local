@@ -44,6 +44,8 @@ def _job_to_api(rec: JobRecord) -> dict[str, Any]:
     if rec.error_result is not None:
         body["status"]["errorResult"] = rec.error_result
         body["status"]["errors"] = rec.errors
+    # LOAD jobs carry destinationTable inside configuration.load (populated by
+    # LoadRunner via load_config); only QUERY/DML attach it under configuration.query.
     if rec.destination_table is not None and rec.job_type != "LOAD":
         body["configuration"]["query"]["destinationTable"] = {
             "projectId": rec.destination_table[0],
