@@ -64,3 +64,7 @@ strict = true
 packages = ["gcp_local"]
 mypy_path = "src"
 exclude = ["src/gcp_local/generated/"]
+
+[[tool.mypy.overrides]]
+module = ["google.protobuf.*"]
+ignore_missing_imports = true
