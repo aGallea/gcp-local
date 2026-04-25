@@ -12,11 +12,13 @@ from gcp_local.services.bigquery.models import FieldSchema
 
 _SAMPLE_LIMIT = 100
 
-_RE_INT = re.compile(r"^-?\d+$")
-_RE_FLOAT = re.compile(r"^-?\d+\.\d+$")
+_RE_INT = re.compile(r"^-?(?:0|[1-9]\d*)$")
+_RE_FLOAT = re.compile(r"^-?\d+\.\d+([eE][+-]?\d+)?$|^-?\d+[eE][+-]?\d+$")
 _RE_BOOL = re.compile(r"^(true|false)$", re.IGNORECASE)
 _RE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_RE_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
+_RE_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$"
+)
 
 
 class AutodetectError(ValueError):

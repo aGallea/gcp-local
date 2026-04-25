@@ -72,3 +72,20 @@ def test_keys_appearing_only_in_later_rows_are_picked_up() -> None:
     by_name = {f.name: f for f in schema}
     assert by_name["id"].type == "INT64"
     assert by_name["name"].type == "STRING"
+
+
+def test_repeated_with_none_element() -> None:
+    schema = autodetect_ndjson([{"tags": ["a", None, "b"]}])
+    assert (schema[0].type, schema[0].mode) == ("STRING", "REPEATED")
+
+
+def test_sparse_record_keys() -> None:
+    schema = autodetect_ndjson(
+        [{"a": {"x": 1}}, {"a": {"y": 2}}]
+    )
+    f = schema[0]
+    assert f.type == "RECORD"
+    assert f.fields is not None
+    by_name = {sub.name: sub for sub in f.fields}
+    assert by_name["x"].type == "INT64"
+    assert by_name["y"].type == "INT64"

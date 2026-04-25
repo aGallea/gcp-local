@@ -68,3 +68,27 @@ def test_empty_payload_raises() -> None:
 def test_header_only_no_data_raises() -> None:
     with pytest.raises(AutodetectError):
         autodetect_csv([["a", "b"]], has_header=True)
+
+
+def test_scientific_notation_float() -> None:
+    rows = [["x"], ["1e10"], ["2.5E-3"], ["1.2e+4"]]
+    schema = autodetect_csv(rows, has_header=True)
+    assert schema[0].type == "FLOAT64"
+
+
+def test_leading_zero_integer_stays_string() -> None:
+    rows = [["zip"], ["07030"], ["02110"]]
+    schema = autodetect_csv(rows, has_header=True)
+    assert schema[0].type == "STRING"
+
+
+def test_timestamp_with_fractional_seconds_and_tz() -> None:
+    rows = [["ts"], ["2024-01-01T00:00:00.123Z"], ["2024-12-31T23:59:59+00:00"]]
+    schema = autodetect_csv(rows, has_header=True)
+    assert schema[0].type == "TIMESTAMP"
+
+
+def test_timestamp_with_trailing_garbage_not_inferred() -> None:
+    rows = [["x"], ["2024-01-01T00:00:00garbage"], ["2024-01-02T00:00:00garbage"]]
+    schema = autodetect_csv(rows, has_header=True)
+    assert schema[0].type == "STRING"
