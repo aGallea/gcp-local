@@ -398,6 +398,7 @@ def _csv_to_dict_rows(
         header = [f.name for f in schema]
         data = csv_rows
 
+    by_name = {f.name: f for f in schema}
     out: list[dict[str, Any]] = []
     for row_idx, row in enumerate(data):
         if len(row) != len(header):
@@ -411,14 +412,12 @@ def _csv_to_dict_rows(
             if cell is _NULL_SENTINEL:
                 payload[name] = None
             else:
-                payload[name] = _coerce_csv_cell(cell, name, schema)
+                payload[name] = _coerce_csv_cell(cell, by_name.get(name))
         out.append(payload)
     return out
 
 
-def _coerce_csv_cell(cell: str, name: str, schema: list[FieldSchema]) -> Any:
-    by_name = {f.name: f for f in schema}
-    field = by_name.get(name)
+def _coerce_csv_cell(cell: str, field: FieldSchema | None) -> Any:
     if field is None:
         return cell
     if cell == "" and field.mode != "REQUIRED":
