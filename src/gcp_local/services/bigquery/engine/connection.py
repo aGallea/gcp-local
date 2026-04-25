@@ -59,6 +59,10 @@ class BigQueryConnection:
             self._conn = await loop.run_in_executor(self._executor, duckdb.connect, self._db_path)
             for ddl in _CATALOG_DDL:
                 await self.execute(ddl)
+            # Avoid a circular import.
+            from gcp_local.services.bigquery.engine.shims import register_shims
+
+            register_shims(self)
         except Exception:
             self._executor.shutdown(wait=False)
             raise
