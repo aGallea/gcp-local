@@ -4,6 +4,13 @@ import socket
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+# Import the client library *before* gcp_local loads its generated *_pb2 modules.
+# Both proto-plus (used by google-cloud-secret-manager) and protoc-generated pb2
+# files attempt to register the same fully-qualified symbols into the default
+# protobuf descriptor pool; whichever arrives second raises "duplicate symbol".
+# Loading the client library first lets our pb2 modules fall back gracefully to
+# FindFileContainingSymbol instead of AddSerializedFile.
+import google.cloud.secretmanager_v1  # noqa: F401
 import pytest_asyncio
 
 from gcp_local.cli import Settings, run
