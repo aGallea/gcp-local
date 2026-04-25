@@ -25,7 +25,17 @@ Start the emulator with all services:
 python -m gcp_local
 ```
 
-Connect a BigQuery client:
+### Run via Docker
+
+```bash
+docker build -f docker/Dockerfile -t gcp-local:dev .
+docker run --rm -p 4510:4510 -p 4443:4443 -p 8086:8086 -p 9050:9050 gcp-local:dev
+curl http://localhost:4510/_emulator/health
+```
+
+For Kubernetes, Rancher Desktop, persistence, and service-selection details, see [`docs/deployment.md`](docs/deployment.md).
+
+### Connect a BigQuery client
 
 ```python
 import os
@@ -71,16 +81,16 @@ print(rows)
 | `GCS_EMULATOR_PORT`         | `4443`  | Override the GCS service port |
 | `SECRET_MANAGER_EMULATOR_PORT` | `8086` | Override the Secret Manager service port |
 
-Reset all state without restarting:
+The admin API is on port `4510`. Reset all state without restarting:
 
 ```bash
-curl -X POST http://localhost:9050/_emulator/reset
+curl -X POST http://localhost:4510/_emulator/reset
 ```
 
 Reset a single service:
 
 ```bash
-curl -X POST http://localhost:9050/_emulator/reset?service=bigquery
+curl -X POST 'http://localhost:4510/_emulator/reset?service=bigquery'
 ```
 
 ## Development
