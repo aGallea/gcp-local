@@ -23,12 +23,15 @@ from gcp_local.services.secret_manager.names import (
     build_secret_name,
     build_version_name,
     parse_secret_name,
+    parse_version_name,
     validate_secret_id,
 )
 from gcp_local.services.secret_manager.storage import (
+    InvalidStateTransition,
     SecretAlreadyExists,
     SecretManagerStorage,
     SecretNotFound,
+    VersionNotFound,
 )
 
 log = logging.getLogger(__name__)
@@ -160,3 +163,135 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
         except SecretNotFound:
             await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.name!r} not found")
         return empty_pb2.Empty()
+
+    # --- version lifecycle -----------------------------------------------
+
+    async def AddSecretVersion(self, request: Any, context: Any) -> Any:
+        try:
+            project, sid = parse_secret_name(request.parent)
+        except InvalidResourceName as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            version = await self._storage.add_version(project, sid, bytes(request.payload.data))
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.parent!r} not found")
+        return _version_to_proto(project, sid, version)
+
+    async def GetSecretVersion(self, request: Any, context: Any) -> Any:
+        try:
+            project, sid, vid_raw = parse_version_name(request.name)
+        except InvalidResourceName as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        if vid_raw == "latest":
+            try:
+                rec = await self._storage.get_secret(project, sid)
+            except SecretNotFound:
+                await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
+            v = rec.highest_enabled_version()
+            if v is None:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"no enabled version for secret {sid!r}",
+                )
+            assert v is not None
+            return _version_to_proto(project, sid, v)
+        try:
+            vid = int(vid_raw)
+        except ValueError:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"bad version id: {vid_raw!r}")
+        try:
+            version = await self._storage.get_version(project, sid, vid)
+        except (SecretNotFound, VersionNotFound):
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"version {request.name!r} not found")
+        return _version_to_proto(project, sid, version)
+
+    async def ListSecretVersions(self, request: Any, context: Any) -> Any:
+        try:
+            project, sid = parse_secret_name(request.parent)
+        except InvalidResourceName as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            items, next_token = await self._storage.list_versions(
+                project,
+                sid,
+                page_size=request.page_size or None,
+                page_token=request.page_token or None,
+            )
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
+        return service_pb2.ListSecretVersionsResponse(
+            versions=[_version_to_proto(project, sid, v) for v in items],
+            next_page_token=next_token or "",
+            total_size=len(items),
+        )
+
+    async def AccessSecretVersion(self, request: Any, context: Any) -> Any:
+        try:
+            project, sid, vid_raw = parse_version_name(request.name)
+        except InvalidResourceName as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+
+        v: SecretVersion
+        if vid_raw == "latest":
+            try:
+                rec = await self._storage.get_secret(project, sid)
+            except SecretNotFound:
+                await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
+            enabled = rec.highest_enabled_version()
+            if enabled is None:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"no enabled version for secret {sid!r}",
+                )
+            assert enabled is not None
+            v = enabled
+        else:
+            try:
+                vid = int(vid_raw)
+            except ValueError:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    f"bad version id: {vid_raw!r}",
+                )
+            try:
+                v = await self._storage.get_version(project, sid, vid)
+            except (SecretNotFound, VersionNotFound):
+                await context.abort(
+                    grpc.StatusCode.NOT_FOUND,
+                    f"version {request.name!r} not found",
+                )
+            if v.state != SecretVersionState.ENABLED:
+                await context.abort(
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    f"version {request.name!r} is in state {v.state.value}",
+                )
+
+        return service_pb2.AccessSecretVersionResponse(
+            name=build_version_name(project, sid, v.id),
+            payload=resources_pb2.SecretPayload(data=v.payload, data_crc32c=v.data_crc32c),
+        )
+
+    async def _set_state(
+        self, request_name: str, new_state: SecretVersionState, context: Any
+    ) -> Any:
+        try:
+            project, sid, vid_raw = parse_version_name(request_name)
+            vid = int(vid_raw)
+        except (InvalidResourceName, ValueError) as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            version = await self._storage.update_version_state(project, sid, vid, new_state)
+        except (SecretNotFound, VersionNotFound):
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"version {request_name!r} not found")
+        except InvalidStateTransition as e:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
+        return _version_to_proto(project, sid, version)
+
+    async def EnableSecretVersion(self, request: Any, context: Any) -> Any:
+        return await self._set_state(request.name, SecretVersionState.ENABLED, context)
+
+    async def DisableSecretVersion(self, request: Any, context: Any) -> Any:
+        return await self._set_state(request.name, SecretVersionState.DISABLED, context)
+
+    async def DestroySecretVersion(self, request: Any, context: Any) -> Any:
+        return await self._set_state(request.name, SecretVersionState.DESTROYED, context)
