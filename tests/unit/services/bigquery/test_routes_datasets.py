@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,12 +9,15 @@ from gcp_local.services.bigquery.storage import BigQueryStorage
 
 
 @pytest.fixture
-async def client() -> TestClient:
+async def client() -> AsyncIterator[TestClient]:
     conn = BigQueryConnection.in_memory()
     await conn.startup()
     storage = BigQueryStorage(conn)
     app = build_app(storage=storage)
-    return TestClient(app)
+    try:
+        yield TestClient(app)
+    finally:
+        await conn.shutdown()
 
 
 def test_create_dataset_201(client: TestClient) -> None:

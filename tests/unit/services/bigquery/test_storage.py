@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+
 import pytest
 
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
@@ -45,10 +47,13 @@ def _tbl(table_id: str = "t", schema: list[FieldSchema] | None = None) -> TableR
 
 
 @pytest.fixture
-async def storage() -> BigQueryStorage:
+async def storage() -> AsyncIterator[BigQueryStorage]:
     conn = BigQueryConnection.in_memory()
     await conn.startup()
-    return BigQueryStorage(conn)
+    try:
+        yield BigQueryStorage(conn)
+    finally:
+        await conn.shutdown()
 
 
 @pytest.mark.asyncio
