@@ -23,23 +23,28 @@ def _job_to_api(rec: JobRecord) -> dict[str, Any]:
         "jobReference": {"projectId": rec.project, "jobId": rec.job_id},
         "user_email": rec.user_email,  # snake_case kept for backward-compat with existing tests
         "userEmail": rec.user_email,
-        "configuration": {"query": {"query": rec.sql}, "jobType": rec.job_type},
+        "configuration": {"jobType": rec.job_type},
         "status": {"state": rec.state},
         "statistics": {
             "startTime": rec.start_time,
             "endTime": rec.end_time,
             "creationTime": rec.create_time,
             "totalBytesProcessed": str(rec.total_bytes_processed),
-            "query": {
-                "totalBytesProcessed": str(rec.total_bytes_processed),
-                "statementType": rec.statement_type,
-            },
         },
     }
+    if rec.job_type == "LOAD":
+        body["configuration"]["load"] = rec.load_config or {}
+        body["statistics"]["load"] = rec.load_stats or {}
+    else:
+        body["configuration"]["query"] = {"query": rec.sql}
+        body["statistics"]["query"] = {
+            "totalBytesProcessed": str(rec.total_bytes_processed),
+            "statementType": rec.statement_type,
+        }
     if rec.error_result is not None:
         body["status"]["errorResult"] = rec.error_result
         body["status"]["errors"] = rec.errors
-    if rec.destination_table is not None:
+    if rec.destination_table is not None and rec.job_type != "LOAD":
         body["configuration"]["query"]["destinationTable"] = {
             "projectId": rec.destination_table[0],
             "datasetId": rec.destination_table[1],
