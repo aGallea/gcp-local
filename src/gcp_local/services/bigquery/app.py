@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from gcp_local.services.bigquery.engine.jobs import JobRunner
 from gcp_local.services.bigquery.engine.loads import LoadRunner
+from gcp_local.services.bigquery.engine.resumable import ResumableSessionStore
 from gcp_local.services.bigquery.routes.datasets import (
     build_router as datasets_router,
 )
@@ -24,7 +25,10 @@ def build_app(
     storage: BigQueryStorage,
     runner: JobRunner,
     load_runner: LoadRunner,
+    resumables: ResumableSessionStore | None = None,
 ) -> FastAPI:
+    if resumables is None:
+        resumables = ResumableSessionStore()
     app = FastAPI(title="gcp-local BigQuery", version="0.0.1")
 
     @app.get("/")
@@ -35,5 +39,5 @@ def build_app(
     app.include_router(tables_router(storage))
     app.include_router(jobs_router(runner))
     app.include_router(tabledata_router(storage))
-    app.include_router(uploads_router(runner, load_runner))
+    app.include_router(uploads_router(runner, load_runner, resumables))
     return app
