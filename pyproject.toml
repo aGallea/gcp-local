@@ -25,6 +25,7 @@ dependencies = [
     "grpc-google-iam-v1>=0.13",
     "duckdb>=0.10",
     "sqlglot>=23.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

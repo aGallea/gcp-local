@@ -25,8 +25,9 @@ from gcp_local.services.bigquery.storage import (
 from gcp_local.services.bigquery.types import UnsupportedType, parse_table_schema
 
 
-def _now_iso() -> str:
-    return dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+def _now_epoch_ms_str() -> str:
+    """Return current time as milliseconds-since-epoch string (BQ REST API format)."""
+    return str(int(dt.datetime.now(tz=dt.UTC).timestamp() * 1000))
 
 
 def _field_to_api(f: FieldSchema) -> dict[str, Any]:
@@ -73,7 +74,7 @@ def build_router(storage: BigQueryStorage) -> APIRouter:
             table_id = ref.get("tableId") or ""
             validate_table_id(table_id)
             schema = parse_table_schema((body.get("schema") or {}).get("fields") or [])
-            now = _now_iso()
+            now = _now_epoch_ms_str()
             rec = TableRecord(
                 project=project,
                 dataset_id=dataset_id,
@@ -154,7 +155,7 @@ def build_router(storage: BigQueryStorage) -> APIRouter:
                 rec.description = body["description"]
             if "labels" in body:
                 rec.labels = dict(body["labels"] or {})
-            rec.last_modified_time = _now_iso()
+            rec.last_modified_time = _now_epoch_ms_str()
             await storage.update_table(rec)
             return _to_api(rec)
         except (TableNotFound, InvalidName) as e:

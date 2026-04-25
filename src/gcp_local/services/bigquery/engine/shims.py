@@ -81,7 +81,7 @@ def register_shims(conn: BigQueryConnection) -> None:
     """
     raw = conn._conn
     assert raw is not None, "register_shims called before startup()"
-    raw.create_function("generate_uuid", _generate_uuid, [], "VARCHAR")
+    raw.create_function("generate_uuid", _generate_uuid, None, "VARCHAR")
     raw.create_function("bq_format_date", _bq_format_date, ["VARCHAR", "DATE"], "VARCHAR")
     raw.create_function("bq_parse_date", _bq_parse_date, ["VARCHAR", "VARCHAR"], "DATE")
     raw.create_function(

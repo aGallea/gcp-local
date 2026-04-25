@@ -30,8 +30,9 @@ class JobPage:
     next_page_token: str | None
 
 
-def _now_iso() -> str:
-    return dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+def _now_epoch_ms_str() -> str:
+    """Return current time as milliseconds-since-epoch string (BQ REST API format)."""
+    return str(int(dt.datetime.now(tz=dt.UTC).timestamp() * 1000))
 
 
 def _encode_token(offset: int) -> str:
@@ -60,7 +61,7 @@ class JobRunner:
         self._clock = clock
 
     async def run_query(self, project: str, job_id: str, sql: str) -> JobRecord:
-        start = _now_iso()
+        start = _now_epoch_ms_str()
         statement_type = _statement_type(sql)
         try:
             translated = await self._translate(project, sql)
@@ -120,7 +121,7 @@ class JobRunner:
         total = int(count_rows[0][0]) if count_rows else 0
         schema = await self._infer_schema(temp_qual)
         self._job_schemas[job_id] = schema
-        end = _now_iso()
+        end = _now_epoch_ms_str()
         return JobRecord(
             project=project,
             job_id=job_id,
@@ -149,7 +150,7 @@ class JobRunner:
         statement_type: str,
     ) -> JobRecord:
         await self._conn.execute(translated)
-        end = _now_iso()
+        end = _now_epoch_ms_str()
         return JobRecord(
             project=project,
             job_id=job_id,
@@ -178,7 +179,7 @@ class JobRunner:
         reason: str,
         message: str,
     ) -> JobRecord:
-        end = _now_iso()
+        end = _now_epoch_ms_str()
         err = {"reason": reason, "message": message, "domain": "global"}
         return JobRecord(
             project=project,

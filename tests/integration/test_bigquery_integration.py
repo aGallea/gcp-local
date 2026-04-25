@@ -1,0 +1,224 @@
+"""Drive the emulator with the real google-cloud-bigquery client.
+
+The google-cloud-bigquery client is synchronous (uses requests under the
+hood).  Running sync BQ calls directly in an async test function blocks
+the event loop and prevents the in-process uvicorn from serving the
+requests.  Every call is therefore dispatched to a thread via
+asyncio.get_running_loop().run_in_executor(None, fn).
+"""
+
+import asyncio
+import os
+from collections.abc import Callable
+
+import pytest
+from google.api_core import exceptions as gax_exceptions
+from google.auth import credentials as ga_credentials
+from google.cloud import bigquery
+from google.cloud.bigquery import (
+    DatasetReference,
+    SchemaField,
+    TableReference,
+)
+
+
+async def _run[T](fn: Callable[[], T]) -> T:
+    """Run a synchronous callable in the default thread executor."""
+    return await asyncio.get_running_loop().run_in_executor(None, fn)
+
+
+def _client(emulator: dict[str, int]) -> bigquery.Client:
+    os.environ["BIGQUERY_EMULATOR_HOST"] = f"localhost:{emulator['bigquery_port']}"
+    return bigquery.Client(
+        project="test-project",
+        credentials=ga_credentials.AnonymousCredentials(),
+        client_options={"api_endpoint": f"http://localhost:{emulator['bigquery_port']}"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_dataset_crud(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    ref = DatasetReference("test-project", "ds_crud")
+    ds = bigquery.Dataset(ref)
+    ds.labels = {"env": "dev"}
+    await _run(lambda: client.create_dataset(ds))
+
+    got = await _run(lambda: client.get_dataset(ref))
+    assert got.labels == {"env": "dev"}
+
+    got.description = "hello"
+    await _run(lambda: client.update_dataset(got, ["description"]))
+    updated = await _run(lambda: client.get_dataset(ref))
+    assert updated.description == "hello"
+
+    await _run(lambda: client.delete_dataset(ref))
+    with pytest.raises(gax_exceptions.NotFound):
+        await _run(lambda: client.get_dataset(ref))
+
+
+@pytest.mark.asyncio
+async def test_table_crud_with_struct_array(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    await _run(
+        lambda: client.create_dataset(bigquery.Dataset(DatasetReference("test-project", "ds_t")))
+    )
+    schema = [
+        SchemaField("id", "INT64", mode="REQUIRED"),
+        SchemaField("tags", "STRING", mode="REPEATED"),
+        SchemaField(
+            "addr",
+            "RECORD",
+            mode="NULLABLE",
+            fields=[
+                SchemaField("city", "STRING"),
+                SchemaField("zip", "STRING", mode="REQUIRED"),
+            ],
+        ),
+    ]
+    table = bigquery.Table(
+        TableReference(DatasetReference("test-project", "ds_t"), "tbl"),
+        schema=schema,
+    )
+    await _run(lambda: client.create_table(table))
+    got = await _run(lambda: client.get_table(table.reference))
+    assert [f.name for f in got.schema] == ["id", "tags", "addr"]
+
+
+@pytest.mark.asyncio
+async def test_streaming_insert_then_query(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    await _run(
+        lambda: client.create_dataset(bigquery.Dataset(DatasetReference("test-project", "ds_si")))
+    )
+    schema = [
+        SchemaField("id", "INT64", mode="REQUIRED"),
+        SchemaField("name", "STRING"),
+    ]
+    table = await _run(
+        lambda: client.create_table(
+            bigquery.Table(
+                TableReference(DatasetReference("test-project", "ds_si"), "rows"),
+                schema=schema,
+            )
+        )
+    )
+    errors = await _run(
+        lambda: client.insert_rows_json(table, [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}])
+    )
+    assert errors == []
+    rows = await _run(
+        lambda: list(
+            client.query("SELECT id, name FROM `test-project.ds_si.rows` ORDER BY id").result()
+        )
+    )
+    assert [(r["id"], r["name"]) for r in rows] == [(1, "a"), (2, "b")]
+
+
+@pytest.mark.asyncio
+async def test_dml_round_trip(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    await _run(
+        lambda: client.create_dataset(bigquery.Dataset(DatasetReference("test-project", "ds_dml")))
+    )
+    schema = [SchemaField("id", "INT64", mode="REQUIRED")]
+    await _run(
+        lambda: client.create_table(
+            bigquery.Table(
+                TableReference(DatasetReference("test-project", "ds_dml"), "t"),
+                schema=schema,
+            )
+        )
+    )
+    await _run(
+        lambda: client.query("INSERT INTO `test-project.ds_dml.t` VALUES (1),(2),(3)").result()
+    )
+    await _run(lambda: client.query("UPDATE `test-project.ds_dml.t` SET id=99 WHERE id=2").result())
+    await _run(lambda: client.query("DELETE FROM `test-project.ds_dml.t` WHERE id=3").result())
+    rows = await _run(
+        lambda: sorted(
+            r["id"] for r in client.query("SELECT id FROM `test-project.ds_dml.t`").result()
+        )
+    )
+    assert rows == [1, 99]
+
+
+@pytest.mark.asyncio
+async def test_paging_with_max_results(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    await _run(
+        lambda: client.create_dataset(bigquery.Dataset(DatasetReference("test-project", "ds_pg")))
+    )
+    schema = [SchemaField("id", "INT64", mode="REQUIRED")]
+    table = await _run(
+        lambda: client.create_table(
+            bigquery.Table(
+                TableReference(DatasetReference("test-project", "ds_pg"), "t"),
+                schema=schema,
+            )
+        )
+    )
+    await _run(lambda: client.insert_rows_json(table, [{"id": i} for i in range(10)]))
+    rows = await _run(
+        lambda: sorted(
+            r["id"]
+            for r in client.query("SELECT id FROM `test-project.ds_pg.t` ORDER BY id").result(
+                page_size=4
+            )
+        )
+    )
+    assert rows == list(range(10))
+
+
+@pytest.mark.asyncio
+async def test_query_unknown_table_raises_not_found(
+    emulator: dict[str, int],
+) -> None:
+    client = _client(emulator)
+    with pytest.raises((gax_exceptions.NotFound, gax_exceptions.BadRequest)):
+        await _run(
+            lambda: client.query("SELECT * FROM `test-project.no_such_ds.no_such_t`").result()
+        )
+
+
+@pytest.mark.asyncio
+async def test_query_parse_error_is_bad_request(
+    emulator: dict[str, int],
+) -> None:
+    client = _client(emulator)
+    with pytest.raises(gax_exceptions.BadRequest):
+        await _run(lambda: client.query("SELECT FROM where").result())
+
+
+@pytest.mark.asyncio
+async def test_information_schema_tables(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    await _run(
+        lambda: client.create_dataset(bigquery.Dataset(DatasetReference("test-project", "ds_is")))
+    )
+    await _run(
+        lambda: client.create_table(
+            bigquery.Table(
+                TableReference(DatasetReference("test-project", "ds_is"), "alpha"),
+                schema=[SchemaField("x", "INT64")],
+            )
+        )
+    )
+    rows = await _run(
+        lambda: list(
+            client.query(
+                "SELECT table_name FROM `test-project.ds_is.INFORMATION_SCHEMA.TABLES` "
+                "ORDER BY table_name"
+            ).result()
+        )
+    )
+    names = [r["table_name"] for r in rows]
+    assert "alpha" in names
+
+
+@pytest.mark.asyncio
+async def test_jobs_list_includes_recent_job(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    await _run(lambda: client.query("SELECT 1").result())
+    jobs = await _run(lambda: list(client.list_jobs(max_results=10)))
+    assert any(j.state == "DONE" for j in jobs)
