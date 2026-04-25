@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 from typing import ClassVar
 
 import uvicorn
@@ -8,6 +9,8 @@ from fastapi import FastAPI
 from gcp_local.core.context import Context
 from gcp_local.core.service import HealthStatus, Port
 from gcp_local.services.bigquery.app import build_app
+from gcp_local.services.bigquery.engine.connection import BigQueryConnection
+from gcp_local.services.bigquery.storage import BigQueryStorage
 
 log = logging.getLogger(__name__)
 
@@ -24,11 +27,16 @@ class BigQueryService:
         self._app: FastAPI | None = None
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task[None] | None = None
+        self._connection: BigQueryConnection | None = None
+        self._storage: BigQueryStorage | None = None
         self._started = False
 
     async def start(self, ctx: Context) -> None:
+        self._connection = self._make_connection(ctx)
+        await self._connection.startup()
+        self._storage = BigQueryStorage(self._connection)
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
-        self._app = build_app()
+        self._app = build_app(storage=self._storage)
         self._server = uvicorn.Server(
             uvicorn.Config(
                 self._app,
@@ -50,11 +58,19 @@ class BigQueryService:
                 await asyncio.wait_for(self._server_task, timeout=5.0)
             except (TimeoutError, asyncio.CancelledError):
                 self._server_task.cancel()
+        if self._connection is not None:
+            await self._connection.shutdown()
         self._started = False
 
     async def reset_state(self) -> None:
-        # No state yet — added in Task 5.
-        return
+        if self._connection is not None:
+            await self._connection.reset()
 
     def health(self) -> HealthStatus:
         return HealthStatus(ok=self._started, message="running" if self._started else "stopped")
+
+    def _make_connection(self, ctx: Context) -> BigQueryConnection:
+        if ctx.persist:
+            db_path = Path(ctx.data_dir) / "bigquery.duckdb"
+            return BigQueryConnection.on_disk(db_path)
+        return BigQueryConnection.in_memory()
