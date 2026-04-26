@@ -11,6 +11,7 @@ from gcp_local.services.gcs.ids import (
     rfc3339_now,
 )
 from gcp_local.services.gcs.models import ObjectRecord
+from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
     GcsStorage,
@@ -32,6 +33,7 @@ def register_copy_compose_routes(
         src_name: str,
         dst_bucket: str,
         dst_name: str,
+        request: Request,
     ) -> JSONResponse:
         try:
             src_record = await storage.get_object(src_bucket, src_name)
@@ -66,7 +68,7 @@ def register_copy_compose_routes(
         except ObjectCollision as e:
             return error_response(409, "conflict", str(e))
         await publish_finalize(state_hub, dst_record)
-        return JSONResponse(dst_record.model_dump(by_alias=True))
+        return JSONResponse(object_to_api_dict(dst_record, str(request.base_url)))
 
     @router.post("/storage/v1/b/{bucket}/o/{name}/compose")
     async def compose_object(
@@ -115,4 +117,4 @@ def register_copy_compose_routes(
         except ObjectCollision as e:
             return error_response(409, "conflict", str(e))
         await publish_finalize(state_hub, record)
-        return JSONResponse(record.model_dump(by_alias=True))
+        return JSONResponse(object_to_api_dict(record, str(request.base_url)))

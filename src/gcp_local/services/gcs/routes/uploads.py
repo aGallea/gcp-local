@@ -23,6 +23,7 @@ from gcp_local.services.gcs.preconditions import (
     Preconditions,
     evaluate_preconditions,
 )
+from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
     GcsStorage,
@@ -130,7 +131,7 @@ def register_upload_routes(
                     user_metadata={},
                     preconditions=pre,
                 )
-                return JSONResponse(record.model_dump(by_alias=True))
+                return JSONResponse(object_to_api_dict(record, str(request.base_url)))
 
             if uploadType == "multipart":
                 body = await request.body()
@@ -163,7 +164,7 @@ def register_upload_routes(
                     user_metadata=user_meta,
                     preconditions=pre,
                 )
-                return JSONResponse(record.model_dump(by_alias=True))
+                return JSONResponse(object_to_api_dict(record, str(request.base_url)))
 
             if uploadType == "resumable":
                 ct = request.headers.get(
@@ -300,4 +301,4 @@ def register_upload_routes(
             with contextlib.suppress(SessionNotFound):
                 await storage.delete_session(upload_id)
 
-        return JSONResponse(record.model_dump(by_alias=True))
+        return JSONResponse(object_to_api_dict(record, str(request.base_url)))

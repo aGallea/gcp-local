@@ -10,6 +10,7 @@ from gcp_local.services.gcs.preconditions import (
     Preconditions,
     evaluate_preconditions,
 )
+from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
     GcsStorage,
@@ -67,4 +68,4 @@ def register_object_write_routes(
         )
         await storage.update_object_metadata(updated)
         await publish_metadata_update(state_hub, updated)
-        return JSONResponse(updated.model_dump(by_alias=True))
+        return JSONResponse(object_to_api_dict(updated, str(request.base_url)))
