@@ -80,9 +80,7 @@ def test_repeated_with_none_element() -> None:
 
 
 def test_sparse_record_keys() -> None:
-    schema = autodetect_ndjson(
-        [{"a": {"x": 1}}, {"a": {"y": 2}}]
-    )
+    schema = autodetect_ndjson([{"a": {"x": 1}}, {"a": {"y": 2}}])
     f = schema[0]
     assert f.type == "RECORD"
     assert f.fields is not None

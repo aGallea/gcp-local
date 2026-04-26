@@ -13,7 +13,6 @@ from gcp_local.services.bigquery.models import (
 )
 from gcp_local.services.bigquery.storage import BigQueryStorage
 
-
 SCHEMA_FIELDS = [{"name": "id", "type": "INT64"}]
 
 
@@ -51,8 +50,14 @@ async def runner() -> AsyncIterator[LoadRunner]:
     storage = BigQueryStorage(conn)
     await storage.create_dataset(
         DatasetRecord(
-            project="p", dataset_id="d", create_time="0", last_modified_time="0",
-            description=None, labels={}, location="US", default_table_expiration_ms=None,
+            project="p",
+            dataset_id="d",
+            create_time="0",
+            last_modified_time="0",
+            description=None,
+            labels={},
+            location="US",
+            default_table_expiration_ms=None,
         )
     )
     yield LoadRunner(connection=conn, storage=storage)
@@ -86,9 +91,7 @@ async def test_write_truncate(runner: LoadRunner) -> None:
         "writeDisposition": "WRITE_TRUNCATE",
         "schema": {"fields": SCHEMA_FIELDS},
     }
-    rec = await runner.run_load(
-        project="p", job_id="j_tr", load_config=config, data=b'{"id": 1}\n'
-    )
+    rec = await runner.run_load(project="p", job_id="j_tr", load_config=config, data=b'{"id": 1}\n')
     assert rec.error_result is None
     rows = await runner._conn.execute('SELECT id FROM "p:d"."t_trunc" ORDER BY id')
     assert [r[0] for r in rows] == [1]
@@ -104,9 +107,7 @@ async def test_write_empty_against_non_empty_fails(runner: LoadRunner) -> None:
         "writeDisposition": "WRITE_EMPTY",
         "schema": {"fields": SCHEMA_FIELDS},
     }
-    rec = await runner.run_load(
-        project="p", job_id="j_we", load_config=config, data=b'{"id": 1}\n'
-    )
+    rec = await runner.run_load(project="p", job_id="j_we", load_config=config, data=b'{"id": 1}\n')
     assert rec.error_result is not None
     assert rec.error_result["reason"] == "duplicate"
     # Original row remains.
@@ -165,8 +166,6 @@ async def test_create_if_needed_uses_existing_table_schema(runner: LoadRunner) -
         "destinationTable": {"projectId": "p", "datasetId": "d", "tableId": "t_existing"},
         "sourceFormat": "NEWLINE_DELIMITED_JSON",
     }
-    rec = await runner.run_load(
-        project="p", job_id="j_e", load_config=config, data=b'{"id": 5}\n'
-    )
+    rec = await runner.run_load(project="p", job_id="j_e", load_config=config, data=b'{"id": 5}\n')
     assert rec.error_result is None
     assert await _row_count(runner._conn, "t_existing") == 1

@@ -1,8 +1,8 @@
 """Multipart upload handler (spec §3, §5.1)."""
 
+import json
 from collections.abc import AsyncIterator
 
-import json
 import pytest
 from fastapi.testclient import TestClient
 
@@ -38,11 +38,13 @@ def _multipart_body(
     boundary = "===gcp_local_test_boundary==="
     md_bytes = json.dumps(metadata).encode("utf-8")
     body = (
-        f"--{boundary}\r\n"
-        f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
-    ).encode() + md_bytes + b"\r\n" + (
-        f"--{boundary}\r\nContent-Type: {data_type}\r\n\r\n"
-    ).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+        (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n").encode()
+        + md_bytes
+        + b"\r\n"
+        + (f"--{boundary}\r\nContent-Type: {data_type}\r\n\r\n").encode()
+        + data
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
     content_type = f"multipart/related; boundary={boundary}"
     return body, content_type
 
@@ -97,8 +99,7 @@ def test_multipart_unsupported_uploadtype(client: TestClient) -> None:
 def test_multipart_malformed_no_metadata_part(client: TestClient) -> None:
     boundary = "==b=="
     body = (
-        f"--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n"
-        f"raw\r\n--{boundary}--\r\n"
+        f"--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\nraw\r\n--{boundary}--\r\n"
     ).encode()
     r = client.post(
         "/upload/bigquery/v2/projects/p/jobs",

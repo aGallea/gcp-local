@@ -17,8 +17,14 @@ async def runner() -> AsyncIterator[LoadRunner]:
     storage = BigQueryStorage(conn)
     await storage.create_dataset(
         DatasetRecord(
-            project="p", dataset_id="d", create_time="0", last_modified_time="0",
-            description=None, labels={}, location="US", default_table_expiration_ms=None,
+            project="p",
+            dataset_id="d",
+            create_time="0",
+            last_modified_time="0",
+            description=None,
+            labels={},
+            location="US",
+            default_table_expiration_ms=None,
         )
     )
     yield LoadRunner(connection=conn, storage=storage)

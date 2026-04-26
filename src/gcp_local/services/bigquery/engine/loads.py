@@ -57,7 +57,10 @@ class LoadRunner:
             source_format = (load_config.get("sourceFormat") or "").upper()
             if source_format not in _SUPPORTED_SOURCE_FORMATS:
                 return self._fail(
-                    project, job_id, load_config, start,
+                    project,
+                    job_id,
+                    load_config,
+                    start,
                     "invalid",
                     f"Unsupported sourceFormat: {source_format!r}",
                 )
@@ -93,7 +96,7 @@ class LoadRunner:
             )
         except _LoadError as e:
             return self._fail(project, job_id, load_config, start, e.reason, str(e))
-        except (TableNotFound,) as e:
+        except TableNotFound as e:
             return self._fail(project, job_id, load_config, start, "notFound", str(e))
         except (AutodetectError, UnsupportedType, ValueError) as e:
             return self._fail(project, job_id, load_config, start, "invalid", str(e))
@@ -228,9 +231,7 @@ class LoadRunner:
                 f"{len(all_errors)} row validation error(s); first: " + "; ".join(head),
             )
         qualname = duckdb_table_qualname(*dest)
-        placeholders = ",".join(
-            "(" + ",".join(["?"] * len(schema)) + ")" for _ in rows
-        )
+        placeholders = ",".join("(" + ",".join(["?"] * len(schema)) + ")" for _ in rows)
         params: list[Any] = [v for row in rows for v in row_to_values(row, schema)]
         await self._conn.execute(f"INSERT INTO {qualname} VALUES {placeholders}", params)
         return len(rows)
@@ -376,7 +377,7 @@ def _parse_csv(
         # BQ semantics: skip N rows total; row 0 is header only when skip==1.
         # When skip>1, drop those rows entirely (they are pre-header garbage)
         # and continue treating row N as header.
-        rows = rows[skip - 1:]
+        rows = rows[skip - 1 :]
     null_marker = load_config.get("nullMarker") or ""
     if null_marker:
         rows = [

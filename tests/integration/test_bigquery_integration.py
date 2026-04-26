@@ -238,14 +238,13 @@ async def test_load_table_from_json_explicit_schema(emulator: dict[str, int]) ->
     ]
     await _run(lambda: client.create_table(bigquery.Table(table_ref, schema=schema)))
     job_config = bigquery.LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
-    rows = [
-        {"id": i, "name": f"row-{i}", "payload": {"k": i}}
-        for i in range(5)
-    ]
+    rows = [{"id": i, "name": f"row-{i}", "payload": {"k": i}} for i in range(5)]
     job = await _run(lambda: client.load_table_from_json(rows, table_ref, job_config=job_config))
     await _run(lambda: job.result())
     out = await _run(
-        lambda: list(client.query("SELECT count(*) AS c FROM `test-project.ds_load_json.rows`").result())
+        lambda: list(
+            client.query("SELECT count(*) AS c FROM `test-project.ds_load_json.rows`").result()
+        )
     )
     assert out[0]["c"] == 5
 
@@ -256,9 +255,7 @@ async def test_load_table_from_json_autodetect_creates_table(emulator: dict[str,
     ds_ref = DatasetReference("test-project", "ds_load_auto")
     await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
     table_ref = TableReference(ds_ref, "auto_t")
-    job_config = bigquery.LoadJobConfig(
-        autodetect=True, source_format="NEWLINE_DELIMITED_JSON"
-    )
+    job_config = bigquery.LoadJobConfig(autodetect=True, source_format="NEWLINE_DELIMITED_JSON")
     rows = [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}]
     job = await _run(lambda: client.load_table_from_json(rows, table_ref, job_config=job_config))
     await _run(lambda: job.result())
@@ -293,7 +290,11 @@ async def test_load_table_from_file_csv(emulator: dict[str, int]) -> None:
     )
     await _run(lambda: job.result())
     rows = await _run(
-        lambda: list(client.query("SELECT id, name FROM `test-project.ds_load_csv.csv_t` ORDER BY id").result())
+        lambda: list(
+            client.query(
+                "SELECT id, name FROM `test-project.ds_load_csv.csv_t` ORDER BY id"
+            ).result()
+        )
     )
     assert [(r["id"], r["name"]) for r in rows] == [(1, "alice"), (2, "bob")]
 
@@ -356,14 +357,12 @@ async def test_load_table_resumable_large_payload(emulator: dict[str, int]) -> N
     # ~6 MiB of NDJSON (each row ~250 B; 25_000 rows ≈ 6.2 MiB).
     big_blob = "x" * 240
     rows = [{"id": i, "blob": big_blob} for i in range(25_000)]
-    job_config = bigquery.LoadJobConfig(
-        schema=schema, source_format="NEWLINE_DELIMITED_JSON"
-    )
-    job = await _run(
-        lambda: client.load_table_from_json(rows, table_ref, job_config=job_config)
-    )
+    job_config = bigquery.LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
+    job = await _run(lambda: client.load_table_from_json(rows, table_ref, job_config=job_config))
     await _run(lambda: job.result())
     count = await _run(
-        lambda: list(client.query("SELECT count(*) AS c FROM `test-project.ds_load_big.big_t`").result())
+        lambda: list(
+            client.query("SELECT count(*) AS c FROM `test-project.ds_load_big.big_t`").result()
+        )
     )
     assert count[0]["c"] == 25_000

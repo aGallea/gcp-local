@@ -1,8 +1,8 @@
 """Resumable upload route handler (spec §5.2)."""
 
+import json
 from collections.abc import AsyncIterator
 
-import json
 import pytest
 from fastapi.testclient import TestClient
 
@@ -23,7 +23,10 @@ async def client() -> AsyncIterator[tuple[TestClient, ResumableSessionStore]]:
     load_runner = LoadRunner(connection=conn, storage=storage)
     sessions = ResumableSessionStore()
     app = build_app(
-        storage=storage, runner=runner, load_runner=load_runner, resumables=sessions,
+        storage=storage,
+        runner=runner,
+        load_runner=load_runner,
+        resumables=sessions,
     )
     try:
         c = TestClient(app)
@@ -148,7 +151,7 @@ def test_resumable_out_of_order_chunk(client) -> None:
 
 
 def test_resumable_delete_drops_session(client) -> None:
-    c, sessions = client
+    c, _sessions = client
     md = _init_metadata("rt5")
     init = c.post(
         "/upload/bigquery/v2/projects/p/jobs",

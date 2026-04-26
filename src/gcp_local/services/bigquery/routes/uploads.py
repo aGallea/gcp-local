@@ -40,30 +40,28 @@ class MultipartParseError(ValueError):
 def parse_multipart_related(body: bytes, content_type: str) -> tuple[dict[str, Any], bytes]:
     """Return (metadata_json, data_bytes) from a multipart/related body."""
     if "multipart/related" not in content_type.lower():
-        raise MultipartParseError(
-            f"expected multipart/related, got {content_type!r}"
-        )
+        raise MultipartParseError(f"expected multipart/related, got {content_type!r}")
     raw = b"Content-Type: " + content_type.encode() + b"\r\n\r\n" + body
     # Use the compat (non-policy) API — email.policy.default breaks binary payloads.
     msg = email.message_from_bytes(raw)
     # walk() yields the outer envelope first, then each part.
-    parts = [p for p in msg.walk() if not p.get_content_maintype() == "multipart"]
+    parts = [p for p in msg.walk() if p.get_content_maintype() != "multipart"]
     if len(parts) < 2:
-        raise MultipartParseError(
-            f"multipart body must have at least 2 parts, got {len(parts)}"
-        )
+        raise MultipartParseError(f"multipart body must have at least 2 parts, got {len(parts)}")
     metadata_part = parts[0]
     data_part = parts[1]
     md_ct = metadata_part.get_content_type()
     if md_ct != "application/json":
-        raise MultipartParseError(
-            f"first part must be application/json, got {md_ct!r}"
-        )
+        raise MultipartParseError(f"first part must be application/json, got {md_ct!r}")
+    md_bytes = metadata_part.get_payload(decode=True)
+    if not isinstance(md_bytes, bytes):
+        raise MultipartParseError("metadata part is not raw bytes")
     try:
-        metadata = json.loads(metadata_part.get_payload(decode=True).decode("utf-8"))
+        metadata = json.loads(md_bytes.decode("utf-8"))
     except json.JSONDecodeError as e:
         raise MultipartParseError(f"metadata is not valid JSON: {e}") from e
-    data = data_part.get_payload(decode=True) or b""
+    data_bytes = data_part.get_payload(decode=True)
+    data: bytes = data_bytes if isinstance(data_bytes, bytes) else b""
     return metadata, data
 
 
@@ -78,7 +76,7 @@ def build_router(
     async def upload_job(
         project: str,
         request: Request,
-        uploadType: str = "",  # noqa: N803
+        uploadType: str = "",
         content_type: str = Header(default="application/octet-stream"),
     ) -> Any:
         try:
@@ -108,7 +106,7 @@ def build_router(
     async def upload_chunk(
         project: str,
         request: Request,
-        upload_id: str = "",  # noqa: N803
+        upload_id: str = "",
         content_range: str = Header(default=""),
     ) -> Any:
         try:
@@ -128,7 +126,7 @@ def build_router(
     @router.delete("/{project}/jobs")
     async def cancel_resumable(
         project: str,
-        upload_id: str = "",  # noqa: N803
+        upload_id: str = "",
     ) -> Any:
         try:
             validate_project_id(project)
@@ -199,7 +197,9 @@ def _handle_resumable_init(
     # caller's jobReference and configuration.
     job_config = {"_metadata": metadata}
     sid = resumables.init(
-        project=project, job_config=job_config, declared_total=declared_total,
+        project=project,
+        job_config=job_config,
+        declared_total=declared_total,
     )
     base = str(request.url).split("?")[0]
     location = f"{base}?upload_id={sid}"
@@ -232,7 +232,9 @@ async def _handle_resumable_put(
     try:
         complete = resumables.append(upload_id, body, start=start, end=end, total=total)
     except ResumableSessionNotFound:
-        return make_error_response(410, f"resumable session not found: {upload_id}", reason="notFound")
+        return make_error_response(
+            410, f"resumable session not found: {upload_id}", reason="notFound"
+        )
     except OutOfOrderChunk as e:
         return make_error_response(400, str(e))
     sess = resumables.get(upload_id)

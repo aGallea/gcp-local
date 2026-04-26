@@ -16,9 +16,7 @@ _RE_INT = re.compile(r"^-?(?:0|[1-9]\d*)$")
 _RE_FLOAT = re.compile(r"^-?\d+\.\d+([eE][+-]?\d+)?$|^-?\d+[eE][+-]?\d+$")
 _RE_BOOL = re.compile(r"^(true|false)$", re.IGNORECASE)
 _RE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_RE_TIMESTAMP = re.compile(
-    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$"
-)
+_RE_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$")
 
 
 class AutodetectError(ValueError):
@@ -35,7 +33,7 @@ def autodetect_ndjson(rows: list[dict[str, Any]]) -> list[FieldSchema]:
     column_order: list[str] = []
     seen: set[str] = set()
     for row in sample:
-        for key in row.keys():
+        for key in row:
             if key not in seen:
                 seen.add(key)
                 column_order.append(key)
@@ -63,7 +61,7 @@ def _infer_column(name: str, values: list[Any]) -> FieldSchema:
         sub_keys: list[str] = []
         sub_seen: set[str] = set()
         for v in non_null:
-            for k in v.keys():
+            for k in v:
                 if k not in sub_seen:
                     sub_seen.add(k)
                     sub_keys.append(k)
@@ -101,12 +99,14 @@ def autodetect_csv(rows: list[list[str]], *, has_header: bool) -> list[FieldSche
         if not rows[0]:
             raise AutodetectError("Cannot autodetect schema from empty CSV")
         header = [f"string_field_{i}" for i in range(len(rows[0]))]
-        data = rows[: _SAMPLE_LIMIT]
+        data = rows[:_SAMPLE_LIMIT]
 
     columns: list[FieldSchema] = []
     for col_idx, name in enumerate(header):
         cells = [row[col_idx] for row in data if col_idx < len(row)]
-        columns.append(FieldSchema(name=name, type=_infer_csv_cell_type(cells), mode="NULLABLE", fields=None))
+        columns.append(
+            FieldSchema(name=name, type=_infer_csv_cell_type(cells), mode="NULLABLE", fields=None)
+        )
     return columns
 
 
