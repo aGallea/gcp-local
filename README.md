@@ -1,28 +1,44 @@
 # gcp-local
 
-A local emulator for Google Cloud Platform services — the GCP counterpart to LocalStack. Apache 2.0.
+A local emulator for Google Cloud services — the GCP counterpart to LocalStack.
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+<!-- TODO: add CI badge once the repo is public and Actions runs against master -->
+
+`gcp-local` lets you point the official `google-cloud-*` Python client libraries at `localhost` and run integration tests, prototypes, and local developer workflows against a real-shaped emulator. No real GCP credentials, no real billing, no flaky network.
 
 ## Status
 
-Alpha. The emulator currently provides working implementations of GCS, Secret Manager, and BigQuery. Pub/Sub and Firestore are planned for v1; Cloud Functions for v2.
+Alpha. Three services are implemented today; two more are planned for v1; see [ROADMAP.md](ROADMAP.md) for what's ahead.
 
-The Python client libraries for all three services work against the emulator with no code changes beyond pointing at `localhost`.
+## Services at a glance
+
+| Service | Status | Default port | Wire | Usage | Architecture |
+|---|---|---|---|---|---|
+| BigQuery | Alpha | 9050 | REST | [usage](docs/services/bigquery.md) | [internals](docs/architecture/bigquery.md) |
+| GCS | Alpha | 4443 | REST | [usage](docs/services/gcs.md) | [internals](docs/architecture/gcs.md) |
+| Secret Manager | Alpha | 8086 | gRPC | [usage](docs/services/secret-manager.md) | [internals](docs/architecture/secret-manager.md) |
+| Pub/Sub | Planned | 8085 | gRPC | — | — |
+| Firestore | Planned | (TBD) | gRPC | — | — |
+
+Status vocabulary: **Stable** = feature-complete for v1, **Alpha** = implemented and in use but may shift, **Planned** = committed to v1 but not started, **Future** = post-v1.
 
 ## Quickstart
 
-Install from source (PyPI release is not yet available):
+### Run from source
 
 ```bash
 git clone https://github.com/aGallea/gcp-local.git
 cd gcp-local
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e .
+python -m gcp_local
 ```
 
-Start the emulator with all services:
+Health check:
 
 ```bash
-python -m gcp_local
+curl http://localhost:4510/_emulator/health
 ```
 
 ### Run via Docker
@@ -33,9 +49,11 @@ docker run --rm -p 4510:4510 -p 4443:4443 -p 8086:8086 -p 9050:9050 gcp-local:de
 curl http://localhost:4510/_emulator/health
 ```
 
-For Kubernetes, Rancher Desktop, persistence, and service-selection details, see [`docs/deployment.md`](docs/deployment.md).
+For docker-compose, Kubernetes, Rancher Desktop, persistence (`PERSIST=1`), and selecting a subset of services with `SERVICES=`, see [`docs/deployment.md`](docs/deployment.md).
 
-### Connect a BigQuery client
+## Connect a client
+
+### BigQuery
 
 ```python
 import os
@@ -56,65 +74,69 @@ client.create_dataset(bigquery.Dataset(ds_ref))
 schema = [SchemaField("id", "INT64", mode="REQUIRED"), SchemaField("name", "STRING")]
 table_ref = TableReference(ds_ref, "greetings")
 client.create_table(bigquery.Table(table_ref, schema=schema))
-
 client.insert_rows_json(table_ref, [{"id": 1, "name": "hello"}])
 
 rows = list(client.query("SELECT * FROM `my-project.demo.greetings`").result())
 print(rows)
 ```
 
-## Services
+### GCS
 
-| Service        | Status    | Docs |
-|----------------|-----------|------|
-| BigQuery       | Alpha     | [docs/services/bigquery.md](docs/services/bigquery.md) |
-| GCS            | Alpha     | [docs/services/gcs.md](docs/services/gcs.md) |
-| Secret Manager | Alpha     | TODO |
+```python
+import os
+from google.auth import credentials as ga_credentials
+from google.cloud import storage
 
-## Configuration
-
-| Variable                    | Default | Description |
-|-----------------------------|---------|-------------|
-| `SERVICES`                  | all     | Comma-separated list of services to start (e.g. `bigquery,gcs`) |
-| `PERSIST`                   | `0`     | Set to `1` to persist state to `/data/` on disk |
-| `BIGQUERY_EMULATOR_PORT`    | `9050`  | Override the BigQuery service port |
-| `GCS_EMULATOR_PORT`         | `4443`  | Override the GCS service port |
-| `SECRET_MANAGER_EMULATOR_PORT` | `8086` | Override the Secret Manager service port |
-
-The admin API is on port `4510`. Reset all state without restarting:
-
-```bash
-curl -X POST http://localhost:4510/_emulator/reset
+os.environ["STORAGE_EMULATOR_HOST"] = "http://localhost:4443"
+client = storage.Client(
+    project="my-project",
+    credentials=ga_credentials.AnonymousCredentials(),
+)
+bucket = client.create_bucket("my-bucket")
+bucket.blob("hello.txt").upload_from_string("hi from gcp-local")
+print(bucket.blob("hello.txt").download_as_text())
 ```
 
-Reset a single service:
+### Secret Manager
 
-```bash
-curl -X POST 'http://localhost:4510/_emulator/reset?service=bigquery'
+```python
+from google.api_core import client_options as co
+from google.auth import credentials as ga_credentials
+from google.cloud import secretmanager
+
+client = secretmanager.SecretManagerServiceClient(
+    credentials=ga_credentials.AnonymousCredentials(),
+    client_options=co.ClientOptions(api_endpoint="localhost:8086"),
+    transport="grpc",
+)
+
+parent = "projects/my-project"
+secret = client.create_secret(
+    parent=parent,
+    secret_id="my-secret",
+    secret={"replication": {"automatic": {}}},
+)
+client.add_secret_version(parent=secret.name, payload={"data": b"shh"})
+print(
+    client.access_secret_version(name=f"{secret.name}/versions/latest").payload.data
+)
 ```
 
-## Development
+## Documentation map
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-
-# Run all tests
-pytest
-
-# Run only integration tests
-pytest tests/integration/
-
-# Linting and type checks
-ruff check .
-ruff format --check .
-mypy
-```
-
-## Disclaimer
-
-gcp-local is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Google LLC or Google Cloud. "Google Cloud Platform," "GCP," and related product names are trademarks of Google LLC.
+- **Use a service** — [`docs/services/`](docs/services/) (one file per service: BigQuery, GCS, Secret Manager).
+- **Run / deploy** — [`docs/deployment.md`](docs/deployment.md).
+- **Architecture & internals** — [`docs/architecture/overview.md`](docs/architecture/overview.md) and the per-service files alongside it.
+- **Roadmap** — [`ROADMAP.md`](ROADMAP.md).
+- **Contribute** — [`CONTRIBUTING.md`](CONTRIBUTING.md). For a brand-new service: [`docs/development/adding-a-service.md`](docs/development/adding-a-service.md).
+- **Changelog** — [`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
-Apache 2.0.
+Apache 2.0. See [`LICENSE`](LICENSE).
+
+## Reporting issues
+
+Bugs and feature requests: [GitHub issues](https://github.com/aGallea/gcp-local/issues) (templates available).
+
+Security: see [`SECURITY.md`](SECURITY.md). The TL;DR is: GitHub Security Advisories preferred, `asafgallea@gmail.com` as backup.
