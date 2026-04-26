@@ -55,9 +55,7 @@ def _parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, Any], by
     msg = BytesParser(policy=compat32).parsebytes(header + body)
     parts = list(msg.walk())
     if len(parts) < 3:
-        raise ValueError(
-            f"expected 2 multipart parts (metadata + data), got {len(parts) - 1}"
-        )
+        raise ValueError(f"expected 2 multipart parts (metadata + data), got {len(parts) - 1}")
     # parts[0] is the container; real parts are [1:]
     meta_part = parts[1]
     obj_part = parts[2]
