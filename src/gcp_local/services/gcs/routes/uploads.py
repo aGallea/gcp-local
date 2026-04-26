@@ -1,5 +1,6 @@
 import contextlib
 import json
+import re
 from email.parser import BytesParser
 from email.policy import compat32
 from typing import Any
@@ -32,12 +33,31 @@ from gcp_local.services.gcs.storage import (
     SessionNotFound,
 )
 
+_BOUNDARY_SQ_RE = re.compile(r"(boundary=)'([^']+)'")
+
+
+def _normalize_multipart_content_type(content_type: str) -> str:
+    """Re-quote ``boundary='...'`` (single-quoted) as ``boundary="..."``.
+
+    apitools (used by ``gcloud storage cp``) formats the multipart boundary
+    with Python's ``%r`` repr, which yields ``boundary='===abc==='`` — a form
+    that Python's ``email`` parser rejects (it expects either no quotes or
+    double quotes per RFC 2045/2046). Real GCS is lenient about this, so we
+    normalize before parsing.
+    """
+    return _BOUNDARY_SQ_RE.sub(lambda m: f'{m.group(1)}"{m.group(2)}"', content_type)
+
 
 def _parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, Any], bytes, str]:
     """Return (metadata_dict, object_bytes, object_content_type)."""
-    header = f"Content-Type: {content_type}\r\n\r\n".encode()
+    normalized_ct = _normalize_multipart_content_type(content_type)
+    header = f"Content-Type: {normalized_ct}\r\n\r\n".encode()
     msg = BytesParser(policy=compat32).parsebytes(header + body)
     parts = list(msg.walk())
+    if len(parts) < 3:
+        raise ValueError(
+            f"expected 2 multipart parts (metadata + data), got {len(parts) - 1}"
+        )
     # parts[0] is the container; real parts are [1:]
     meta_part = parts[1]
     obj_part = parts[2]
