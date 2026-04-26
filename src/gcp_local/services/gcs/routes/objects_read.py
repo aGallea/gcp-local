@@ -1,11 +1,12 @@
 import base64
 
-from fastapi import APIRouter, Header, Query, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from gcp_local.core.state_hub import StateHub
 from gcp_local.services.gcs.errors import error_response
 from gcp_local.services.gcs.events import publish_delete
+from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
     GcsStorage,
@@ -44,6 +45,7 @@ def register_object_read_routes(
     @router.get("/storage/v1/b/{bucket}/o")
     async def list_objects(
         bucket: str,
+        request: Request,
         prefix: str = "",
         delimiter: str | None = None,
         maxResults: int | None = Query(default=None, alias="maxResults"),
@@ -61,8 +63,10 @@ def register_object_read_routes(
         except BucketNotFound:
             return error_response(404, "notFound", f"bucket {bucket!r} not found")
 
+        base_url = str(request.base_url)
         body: dict[str, object] = {
-            "items": [o.model_dump(by_alias=True) for o in objects],
+            "kind": "storage#objects",
+            "items": [object_to_api_dict(o, base_url) for o in objects],
         }
         if prefixes:
             body["prefixes"] = prefixes
@@ -74,6 +78,7 @@ def register_object_read_routes(
     async def get_object(
         bucket: str,
         name: str,
+        request: Request,
         alt: str = "json",
         range_header: str | None = Header(default=None, alias="Range"),
     ) -> Response:
@@ -85,7 +90,7 @@ def register_object_read_routes(
             return error_response(404, "notFound", f"object {name!r} not found")
 
         if alt != "media":
-            return JSONResponse(record.model_dump(by_alias=True))
+            return JSONResponse(object_to_api_dict(record, str(request.base_url)))
 
         data = await storage.get_object_bytes(bucket, name)
         if range_header:
@@ -111,11 +116,12 @@ def register_object_read_routes(
     async def download_object(
         bucket: str,
         name: str,
+        request: Request,
         alt: str = "media",
         range_header: str | None = Header(default=None, alias="Range"),
     ) -> Response:
         """Download endpoint used by the google-cloud-storage client library."""
-        return await get_object(bucket, name, alt=alt, range_header=range_header)
+        return await get_object(bucket, name, request, alt=alt, range_header=range_header)
 
     @router.delete("/storage/v1/b/{bucket}/o/{name:path}")
     async def delete_object(bucket: str, name: str) -> Response:

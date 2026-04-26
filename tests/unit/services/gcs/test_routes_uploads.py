@@ -99,6 +99,37 @@ async def test_multipart_upload(wired):
     assert body_json["metadata"] == {"author": "asaf"}
 
 
+async def test_multipart_upload_apitools_single_quoted_boundary(wired):
+    """Regression: apitools (gcloud storage cp) emits boundary='...' (single-quoted).
+
+    Python's email parser only recognizes unquoted or double-quoted boundary
+    parameters per RFC 2045/2046. Real GCS is lenient about this — we must be
+    too, otherwise gcloud storage cp fails with "list index out of range".
+    """
+    c, _, _ = wired
+    boundary = "===============1234567=="
+    meta = json.dumps({"name": "doc.txt", "contentType": "text/plain"})
+    body = (
+        f"--{boundary}\r\n"
+        f"Content-Type: application/json\r\n\r\n"
+        f"{meta}\r\n"
+        f"--{boundary}\r\n"
+        f"Content-Type: text/plain\r\nContent-Transfer-Encoding: binary\r\n\r\n"
+        f"hello from gcloud\r\n"
+        f"--{boundary}--\r\n"
+    ).encode()
+    # Note the SINGLE quotes around the boundary value — what apitools sends.
+    r = await c.post(
+        "/upload/storage/v1/b/b/o",
+        params={"uploadType": "multipart"},
+        content=body,
+        headers={"Content-Type": f"multipart/related; boundary='{boundary}'"},
+    )
+    assert r.status_code == 200, r.text
+    body_json = r.json()
+    assert body_json["name"] == "doc.txt"
+
+
 async def test_precondition_if_generation_match_zero_blocks_overwrite(wired):
     c, _, _ = wired
     await c.post(
