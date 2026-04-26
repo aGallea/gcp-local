@@ -8,6 +8,7 @@ asyncio.get_running_loop().run_in_executor(None, fn).
 """
 
 import asyncio
+import io
 import os
 from collections.abc import Callable
 
@@ -222,3 +223,146 @@ async def test_jobs_list_includes_recent_job(emulator: dict[str, int]) -> None:
     await _run(lambda: client.query("SELECT 1").result())
     jobs = await _run(lambda: list(client.list_jobs(max_results=10)))
     assert any(j.state == "DONE" for j in jobs)
+
+
+@pytest.mark.asyncio
+async def test_load_table_from_json_explicit_schema(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_json")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "rows")
+    schema = [
+        SchemaField("id", "INT64", mode="REQUIRED"),
+        SchemaField("name", "STRING"),
+        SchemaField("payload", "JSON"),
+    ]
+    await _run(lambda: client.create_table(bigquery.Table(table_ref, schema=schema)))
+    job_config = bigquery.LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
+    rows = [{"id": i, "name": f"row-{i}", "payload": {"k": i}} for i in range(5)]
+    job = await _run(lambda: client.load_table_from_json(rows, table_ref, job_config=job_config))
+    await _run(lambda: job.result())
+    out = await _run(
+        lambda: list(
+            client.query("SELECT count(*) AS c FROM `test-project.ds_load_json.rows`").result()
+        )
+    )
+    assert out[0]["c"] == 5
+
+
+@pytest.mark.asyncio
+async def test_load_table_from_json_autodetect_creates_table(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_auto")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "auto_t")
+    job_config = bigquery.LoadJobConfig(autodetect=True, source_format="NEWLINE_DELIMITED_JSON")
+    rows = [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}]
+    job = await _run(lambda: client.load_table_from_json(rows, table_ref, job_config=job_config))
+    await _run(lambda: job.result())
+    table = await _run(lambda: client.get_table(table_ref))
+    by_name = {f.name: f.field_type for f in table.schema}
+    # The client library normalizes INT64 to INTEGER on the way back out.
+    assert by_name in (
+        {"id": "INTEGER", "name": "STRING"},
+        {"id": "INT64", "name": "STRING"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_table_from_file_csv(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_csv")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "csv_t")
+    schema = [SchemaField("id", "INT64"), SchemaField("name", "STRING")]
+    job_config = bigquery.LoadJobConfig(
+        schema=schema,
+        source_format="CSV",
+        skip_leading_rows=1,
+    )
+    csv_text = "id,name\n1,alice\n2,bob\n"
+    job = await _run(
+        lambda: client.load_table_from_file(
+            io.BytesIO(csv_text.encode()),
+            table_ref,
+            job_config=job_config,
+        )
+    )
+    await _run(lambda: job.result())
+    rows = await _run(
+        lambda: list(
+            client.query(
+                "SELECT id, name FROM `test-project.ds_load_csv.csv_t` ORDER BY id"
+            ).result()
+        )
+    )
+    assert [(r["id"], r["name"]) for r in rows] == [(1, "alice"), (2, "bob")]
+
+
+@pytest.mark.asyncio
+async def test_load_table_write_truncate(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_trunc")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "trunc_t")
+    schema = [SchemaField("id", "INT64")]
+    await _run(lambda: client.create_table(bigquery.Table(table_ref, schema=schema)))
+    # Pre-populate via insertAll.
+    await _run(lambda: client.insert_rows_json(table_ref, [{"id": 99}, {"id": 100}]))
+    job_config = bigquery.LoadJobConfig(
+        schema=schema,
+        source_format="NEWLINE_DELIMITED_JSON",
+        write_disposition="WRITE_TRUNCATE",
+    )
+    job = await _run(
+        lambda: client.load_table_from_json([{"id": 1}], table_ref, job_config=job_config)
+    )
+    await _run(lambda: job.result())
+    rows = await _run(
+        lambda: list(client.query("SELECT id FROM `test-project.ds_load_trunc.trunc_t`").result())
+    )
+    assert [r["id"] for r in rows] == [1]
+
+
+@pytest.mark.asyncio
+async def test_load_table_write_empty_against_non_empty_fails(emulator: dict[str, int]) -> None:
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_we")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "we_t")
+    schema = [SchemaField("id", "INT64")]
+    await _run(lambda: client.create_table(bigquery.Table(table_ref, schema=schema)))
+    await _run(lambda: client.insert_rows_json(table_ref, [{"id": 7}]))
+    job_config = bigquery.LoadJobConfig(
+        schema=schema,
+        source_format="NEWLINE_DELIMITED_JSON",
+        write_disposition="WRITE_EMPTY",
+    )
+    with pytest.raises(gax_exceptions.GoogleAPICallError):
+        job = await _run(
+            lambda: client.load_table_from_json([{"id": 1}], table_ref, job_config=job_config)
+        )
+        await _run(lambda: job.result())
+
+
+@pytest.mark.asyncio
+async def test_load_table_resumable_large_payload(emulator: dict[str, int]) -> None:
+    """Force the official client into resumable mode by sending ~6 MiB of NDJSON."""
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_big")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "big_t")
+    schema = [SchemaField("id", "INT64"), SchemaField("blob", "STRING")]
+    await _run(lambda: client.create_table(bigquery.Table(table_ref, schema=schema)))
+    # ~6 MiB of NDJSON (each row ~250 B; 25_000 rows ≈ 6.2 MiB).
+    big_blob = "x" * 240
+    rows = [{"id": i, "blob": big_blob} for i in range(25_000)]
+    job_config = bigquery.LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
+    job = await _run(lambda: client.load_table_from_json(rows, table_ref, job_config=job_config))
+    await _run(lambda: job.result())
+    count = await _run(
+        lambda: list(
+            client.query("SELECT count(*) AS c FROM `test-project.ds_load_big.big_t`").result()
+        )
+    )
+    assert count[0]["c"] == 25_000

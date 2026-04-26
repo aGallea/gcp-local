@@ -46,7 +46,7 @@ class TableRecord:
 class JobRecord:
     project: str
     job_id: str
-    job_type: str  # "QUERY" | "DML"
+    job_type: str  # "QUERY" | "DML" | "LOAD"
     state: str  # always "DONE" in v1
     create_time: str
     start_time: str
@@ -59,6 +59,8 @@ class JobRecord:
     total_bytes_processed: int
     error_result: dict[str, Any] | None
     errors: list[dict[str, Any]] = dc_field(default_factory=list)
+    load_config: dict[str, Any] | None = None
+    load_stats: dict[str, Any] | None = None
 
 
 def _field_to_dict(f: FieldSchema) -> dict[str, Any]:
@@ -154,4 +156,6 @@ def job_from_dict(raw: dict[str, Any]) -> JobRecord:
         total_bytes_processed=raw["total_bytes_processed"],
         error_result=raw.get("error_result"),
         errors=list(raw.get("errors") or []),
+        load_config=raw.get("load_config"),
+        load_stats=raw.get("load_stats"),
     )

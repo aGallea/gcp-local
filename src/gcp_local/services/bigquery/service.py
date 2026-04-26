@@ -12,6 +12,8 @@ from gcp_local.core.service import HealthStatus, Port
 from gcp_local.services.bigquery.app import build_app
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
 from gcp_local.services.bigquery.engine.jobs import JobRunner
+from gcp_local.services.bigquery.engine.loads import LoadRunner
+from gcp_local.services.bigquery.engine.resumable import ResumableSessionStore
 from gcp_local.services.bigquery.storage import BigQueryStorage
 
 log = logging.getLogger(__name__)
@@ -32,6 +34,8 @@ class BigQueryService:
         self._connection: BigQueryConnection | None = None
         self._storage: BigQueryStorage | None = None
         self._runner: JobRunner | None = None
+        self._load_runner: LoadRunner | None = None
+        self._resumables: ResumableSessionStore | None = None
         self._sweeper_task: asyncio.Task[None] | None = None
         self._started = False
 
@@ -40,8 +44,15 @@ class BigQueryService:
         await self._connection.startup()
         self._storage = BigQueryStorage(self._connection)
         self._runner = JobRunner(connection=self._connection, storage=self._storage)
+        self._load_runner = LoadRunner(connection=self._connection, storage=self._storage)
+        self._resumables = ResumableSessionStore()
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
-        self._app = build_app(storage=self._storage, runner=self._runner)
+        self._app = build_app(
+            storage=self._storage,
+            runner=self._runner,
+            load_runner=self._load_runner,
+            resumables=self._resumables,
+        )
         self._server = uvicorn.Server(
             uvicorn.Config(
                 self._app,
@@ -62,6 +73,8 @@ class BigQueryService:
                 await asyncio.sleep(300)  # 5 minutes
                 if self._runner is not None:
                     await self._runner.sweep_expired(ttl_seconds=3600)
+                if self._resumables is not None:
+                    self._resumables.sweep_expired(ttl_seconds=600)
         except asyncio.CancelledError:
             return
 
@@ -80,6 +93,11 @@ class BigQueryService:
     async def reset_state(self) -> None:
         if self._connection is not None:
             await self._connection.reset()
+        if self._resumables is not None:
+            # Clear in place — the router has captured this exact instance
+            # in its closure, so reassigning would leave the live router
+            # writing to a detached store.
+            self._resumables.clear()
 
     def health(self) -> HealthStatus:
         return HealthStatus(ok=self._started, message="running" if self._started else "stopped")

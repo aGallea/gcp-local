@@ -1,7 +1,6 @@
 """Synchronous job execution + result paging (spec §6)."""
 
 import base64
-import datetime as dt
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from dataclasses import dataclass
 import duckdb
 import sqlglot
 
+from gcp_local.services.bigquery.engine._time import now_epoch_ms_str
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
 from gcp_local.services.bigquery.engine.translate import (
     UnsupportedSql,
@@ -28,11 +28,6 @@ class JobPage:
     rows: list[tuple]  # type: ignore[type-arg]
     schema: list[FieldSchema]
     next_page_token: str | None
-
-
-def _now_epoch_ms_str() -> str:
-    """Return current time as milliseconds-since-epoch string (BQ REST API format)."""
-    return str(int(dt.datetime.now(tz=dt.UTC).timestamp() * 1000))
 
 
 def _encode_token(offset: int) -> str:
@@ -61,7 +56,7 @@ class JobRunner:
         self._clock = clock
 
     async def run_query(self, project: str, job_id: str, sql: str) -> JobRecord:
-        start = _now_epoch_ms_str()
+        start = now_epoch_ms_str()
         statement_type = _statement_type(sql)
         try:
             translated = await self._translate(project, sql)
@@ -121,7 +116,7 @@ class JobRunner:
         total = int(count_rows[0][0]) if count_rows else 0
         schema = await self._infer_schema(temp_qual)
         self._job_schemas[job_id] = schema
-        end = _now_epoch_ms_str()
+        end = now_epoch_ms_str()
         return JobRecord(
             project=project,
             job_id=job_id,
@@ -150,7 +145,7 @@ class JobRunner:
         statement_type: str,
     ) -> JobRecord:
         await self._conn.execute(translated)
-        end = _now_epoch_ms_str()
+        end = now_epoch_ms_str()
         return JobRecord(
             project=project,
             job_id=job_id,
@@ -179,7 +174,7 @@ class JobRunner:
         reason: str,
         message: str,
     ) -> JobRecord:
-        end = _now_epoch_ms_str()
+        end = now_epoch_ms_str()
         err = {"reason": reason, "message": message, "domain": "global"}
         return JobRecord(
             project=project,
@@ -225,6 +220,11 @@ class JobRunner:
     async def cancel(self, project: str, job_id: str) -> JobRecord:
         """No-op success in v1 — queries run synchronously so there's nothing to cancel."""
         return await self.get(project, job_id)
+
+    def register_external(self, rec: JobRecord) -> None:
+        """Persist a job that was executed by another runner (e.g. LoadRunner)."""
+        self._jobs[(rec.project, rec.job_id)] = rec
+        self._job_ended_at[(rec.project, rec.job_id)] = self._clock()
 
     async def read_page(self, job_id: str, *, page_size: int, page_token: str | None) -> JobPage:
         offset = _decode_token(page_token)

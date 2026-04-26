@@ -16,30 +16,37 @@ from gcp_local.services.bigquery.names import (
 from gcp_local.services.bigquery.types import duckdb_value_to_bq_wire
 
 
-def _job_to_api(rec: JobRecord) -> dict[str, Any]:
+def job_to_api(rec: JobRecord) -> dict[str, Any]:
     body: dict[str, Any] = {
         "kind": "bigquery#job",
         "id": f"{rec.project}:{rec.job_id}",
         "jobReference": {"projectId": rec.project, "jobId": rec.job_id},
         "user_email": rec.user_email,  # snake_case kept for backward-compat with existing tests
         "userEmail": rec.user_email,
-        "configuration": {"query": {"query": rec.sql}, "jobType": rec.job_type},
+        "configuration": {"jobType": rec.job_type},
         "status": {"state": rec.state},
         "statistics": {
             "startTime": rec.start_time,
             "endTime": rec.end_time,
             "creationTime": rec.create_time,
             "totalBytesProcessed": str(rec.total_bytes_processed),
-            "query": {
-                "totalBytesProcessed": str(rec.total_bytes_processed),
-                "statementType": rec.statement_type,
-            },
         },
     }
+    if rec.job_type == "LOAD":
+        body["configuration"]["load"] = rec.load_config or {}
+        body["statistics"]["load"] = rec.load_stats or {}
+    else:
+        body["configuration"]["query"] = {"query": rec.sql}
+        body["statistics"]["query"] = {
+            "totalBytesProcessed": str(rec.total_bytes_processed),
+            "statementType": rec.statement_type,
+        }
     if rec.error_result is not None:
         body["status"]["errorResult"] = rec.error_result
         body["status"]["errors"] = rec.errors
-    if rec.destination_table is not None:
+    # LOAD jobs carry destinationTable inside configuration.load (populated by
+    # LoadRunner via load_config); only QUERY/DML attach it under configuration.query.
+    if rec.destination_table is not None and rec.job_type != "LOAD":
         body["configuration"]["query"]["destinationTable"] = {
             "projectId": rec.destination_table[0],
             "datasetId": rec.destination_table[1],
@@ -76,7 +83,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             qcfg = (body.get("configuration") or {}).get("query") or {}
             sql = qcfg.get("query") or ""
             rec = await runner.run_query(project=project, job_id=job_id, sql=sql)
-            return _job_to_api(rec)
+            return job_to_api(rec)
         except InvalidName as e:
             return bigquery_error_response(e).to_response()
 
@@ -86,7 +93,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             validate_project_id(project)
             validate_job_id(job_id)
             rec = await runner.get(project, job_id)
-            return _job_to_api(rec)
+            return job_to_api(rec)
         except (JobNotFound, InvalidName) as e:
             return bigquery_error_response(e).to_response()
 
@@ -97,7 +104,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             recs = await runner.list_jobs(project)
             return {
                 "kind": "bigquery#jobList",
-                "jobs": [_job_to_api(r) for r in recs],
+                "jobs": [job_to_api(r) for r in recs],
             }
         except InvalidName as e:
             return bigquery_error_response(e).to_response()
@@ -108,7 +115,7 @@ def build_router(runner: JobRunner) -> APIRouter:
             validate_project_id(project)
             validate_job_id(job_id)
             rec = await runner.cancel(project, job_id)
-            return {"kind": "bigquery#jobCancelResponse", "job": _job_to_api(rec)}
+            return {"kind": "bigquery#jobCancelResponse", "job": job_to_api(rec)}
         except (JobNotFound, InvalidName) as e:
             return bigquery_error_response(e).to_response()
 

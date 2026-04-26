@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from gcp_local.services.bigquery.app import build_app
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
 from gcp_local.services.bigquery.engine.jobs import JobRunner
+from gcp_local.services.bigquery.engine.loads import LoadRunner
 from gcp_local.services.bigquery.storage import BigQueryStorage
 
 
@@ -15,7 +16,8 @@ async def client() -> AsyncIterator[TestClient]:
     await conn.startup()
     storage = BigQueryStorage(conn)
     runner = JobRunner(connection=conn, storage=storage)
-    c = TestClient(build_app(storage=storage, runner=runner))
+    load_runner = LoadRunner(connection=conn, storage=storage)
+    c = TestClient(build_app(storage=storage, runner=runner, load_runner=load_runner))
     c.post(
         "/bigquery/v2/projects/p/datasets",
         json={"datasetReference": {"projectId": "p", "datasetId": "d"}},

@@ -14,12 +14,14 @@ Default port: **9050**.
 - `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.getQueryResults` with `pageToken` paging
 - DML: `INSERT`, `UPDATE`, `DELETE`, `MERGE`
 - Streaming inserts: `tabledata.insertAll` — rows immediately visible
+- Inline-payload load jobs: `client.load_table_from_json(...)` and `client.load_table_from_file(..., source_format="NEWLINE_DELIMITED_JSON" | "CSV")` (see [Load jobs](#load-jobs))
 - `INFORMATION_SCHEMA` views: `TABLES`, `COLUMNS`, `SCHEMATA`
 - Multi-project namespacing: different project IDs share one DuckDB file but are isolated
 
 ## What's not emulated (v1)
 
-- Load jobs (`LoadJobConfiguration`), copy jobs, extract jobs
+- Load jobs sourcing from `gs://` URIs, or from binary formats (Parquet, Avro, ORC, Datastore)
+- Copy jobs, extract jobs
 - Table snapshots, clones, time-travel (`FOR SYSTEM_TIME AS OF …`)
 - Materialized views, scheduled queries, routines (UDFs, stored procs), models
 - `ML.*` functions, `ST_*` geography functions, scripting / procedural SQL
@@ -31,6 +33,81 @@ Default port: **9050**.
 - Partitioning and clustering — DDL accepted and stored in metadata; ignored at query time
 - Streaming-buffer simulation (insertions are immediately durable, no eventual-visibility window)
 - Legacy SQL (`useLegacySql: true`) — rejected with `invalidQuery`
+
+---
+
+## Load jobs
+
+The emulator supports **inline-payload load jobs** — `client.load_table_from_json(...)` and `client.load_table_from_file(..., source_format=NEWLINE_DELIMITED_JSON | CSV)` work unchanged. GCS-URI loads (`source_uris=["gs://..."]`) and binary formats (Parquet, Avro, ORC) are not supported in v1.
+
+### Inline NDJSON
+
+```python
+from google.cloud.bigquery import LoadJobConfig, SchemaField
+
+schema = [
+    SchemaField("id", "INT64", mode="REQUIRED"),
+    SchemaField("name", "STRING"),
+    SchemaField("payload", "JSON"),
+]
+job_config = LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
+rows = [{"id": 1, "name": "alice", "payload": {"k": 1}}]
+job = client.load_table_from_json(rows, table_ref, job_config=job_config)
+job.result()  # blocks until done; load runs synchronously inside the emulator
+```
+
+### Inline CSV
+
+```python
+import io
+from google.cloud.bigquery import LoadJobConfig, SchemaField
+
+schema = [SchemaField("id", "INT64"), SchemaField("name", "STRING")]
+job_config = LoadJobConfig(
+    schema=schema,
+    source_format="CSV",
+    skip_leading_rows=1,
+)
+csv_text = "id,name\n1,alice\n2,bob\n"
+job = client.load_table_from_file(io.BytesIO(csv_text.encode()), table_ref, job_config=job_config)
+job.result()
+```
+
+### Schema autodetect
+
+`LoadJobConfig(autodetect=True)` works for both NDJSON and CSV:
+
+```python
+job_config = LoadJobConfig(autodetect=True, source_format="NEWLINE_DELIMITED_JSON")
+job = client.load_table_from_json(
+    [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}],
+    table_ref,
+    job_config=job_config,
+)
+job.result()
+# Table is created automatically with inferred schema (id INT64, name STRING).
+```
+
+For NDJSON, the emulator walks the first 100 rows and widens types per top-level key (`BOOL → INT64 → FLOAT64 → STRING`; nested objects → `RECORD`; arrays → `REPEATED`). For CSV, the emulator sniffs each column over up to 100 rows; without a header (`skip_leading_rows=0`), columns are named `string_field_0`, `string_field_1`, ...
+
+### Write dispositions
+
+| `write_disposition` | Behavior |
+|---|---|
+| `WRITE_APPEND` (default) | Rows are appended to the existing table. |
+| `WRITE_TRUNCATE` | Existing rows are deleted before the load (transactional — a failed insert leaves the original rows intact). |
+| `WRITE_EMPTY` | Load fails with `reason: duplicate` if the table already contains rows. |
+
+### Create dispositions
+
+| `create_disposition` | Behavior |
+|---|---|
+| `CREATE_IF_NEEDED` (default) | The table is created from the resolved schema if it doesn't exist. |
+| `CREATE_NEVER` | The job fails with `reason: notFound` if the table doesn't exist. |
+
+### Large payloads
+
+The official client automatically switches from a single multipart POST to a chunked resumable upload once the payload exceeds `_DEFAULT_CHUNKSIZE` (about 5 MiB). The emulator handles both — large `load_table_from_json` calls work with no extra configuration.
 
 ---
 
