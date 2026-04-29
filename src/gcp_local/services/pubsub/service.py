@@ -42,8 +42,8 @@ class PubSubService:
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._server = grpc.aio.server()
         self._server.add_insecure_port(f"[::]:{port}")
-        publisher = PublisherServicer(storage=self._storage)
-        subscriber = SubscriberServicer(storage=self._storage)
+        publisher = PublisherServicer(storage=self._storage, state_hub=ctx.state_hub)
+        subscriber = SubscriberServicer(storage=self._storage, publisher=publisher)
         pubsub_pb2_grpc.add_PublisherServicer_to_server(publisher, self._server)  # type: ignore[no-untyped-call]
         pubsub_pb2_grpc.add_SubscriberServicer_to_server(subscriber, self._server)  # type: ignore[no-untyped-call]
         await self._server.start()

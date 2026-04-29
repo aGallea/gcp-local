@@ -1,7 +1,11 @@
 """Pub/Sub gRPC servicers."""
 
+import asyncio
 import base64
-from typing import NoReturn
+import datetime as dt
+import itertools
+from collections import defaultdict
+from typing import NoReturn, Protocol
 
 import grpc
 
@@ -11,13 +15,17 @@ from gcp_local.services.pubsub.errors import (
     PubSubError,
     grpc_code_for,
 )
-from gcp_local.services.pubsub.models import TopicRecord
+from gcp_local.services.pubsub.models import MessageRecord, TopicRecord
 from gcp_local.services.pubsub.names import (
     InvalidName,
     parse_topic_name,
     validate_resource_id,
 )
 from gcp_local.services.pubsub.storage import PubSubStorage
+
+
+class _StateHubLike(Protocol):
+    async def publish(self, event: str, payload: dict) -> None: ...
 
 
 async def _abort(context: grpc.aio.ServicerContext, exc: Exception) -> NoReturn:
@@ -68,8 +76,22 @@ def _topic_proto_to_record(msg: pubsub_pb2.Topic) -> TopicRecord:
 
 
 class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
-    def __init__(self, *, storage: PubSubStorage) -> None:
+    def __init__(
+        self,
+        *,
+        storage: PubSubStorage,
+        state_hub: _StateHubLike | None = None,
+    ) -> None:
         self._storage = storage
+        self._state_hub = state_hub
+        # Per-topic monotonic message-id counters. Keyed by (project, topic_id).
+        self._counters: dict[tuple[str, str], itertools.count] = defaultdict(
+            lambda: itertools.count(1)
+        )
+        # asyncio.Event per (project, sub_id) registered by SubscriberServicer
+        # so Pull / StreamingPull can wake on Publish. Set by the subscriber side
+        # at first-pull time.
+        self.deliverable_events: dict[tuple[str, str], asyncio.Event] = {}
 
     async def CreateTopic(
         self,
@@ -169,7 +191,66 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
             await _abort(context, e)
         return pubsub_pb2.ListTopicSubscriptionsResponse(subscriptions=sorted(names))
 
+    async def Publish(
+        self,
+        request: pubsub_pb2.PublishRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> pubsub_pb2.PublishResponse:
+        try:
+            project, topic_id = _parse_topic(request.topic)
+            # Verify topic exists.
+            await self._storage.get_topic(project, topic_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+
+        message_ids: list[str] = []
+        counter = self._counters[(project, topic_id)]
+        for proto_msg in request.messages:
+            seq = next(counter)
+            mid = f"{topic_id}-{seq}"
+            now = dt.datetime.now(dt.UTC)
+            rec = MessageRecord(
+                message_id=mid,
+                publish_time=now,
+                data=bytes(proto_msg.data),
+                attributes=dict(proto_msg.attributes),
+                ordering_key=proto_msg.ordering_key or "",
+            )
+            await self._storage.append_message(project, topic_id, rec)
+            message_ids.append(mid)
+            if self._state_hub is not None:
+                await self._state_hub.publish(
+                    "pubsub.message.published",
+                    {
+                        "topic": request.topic,
+                        "message_id": mid,
+                        "attributes": dict(proto_msg.attributes),
+                        "size_bytes": len(proto_msg.data),
+                        "publish_time": now.isoformat(),
+                    },
+                )
+
+        # Wake any waiting Pull / StreamingPull on subscriptions of this topic.
+        # The SubscriberServicer registers Events keyed by (sub_project, sub_id);
+        # we look up subs that point at this topic via storage.
+        sub_names = await self._storage.list_topic_subscriptions(project, topic_id)
+        for full_name in sub_names:
+            # parse "projects/<p>/subscriptions/<s>"
+            parts = full_name.split("/")
+            sub_key = (parts[1], parts[3])
+            event = self.deliverable_events.get(sub_key)
+            if event is not None:
+                event.set()
+
+        return pubsub_pb2.PublishResponse(message_ids=message_ids)
+
 
 class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
-    def __init__(self, *, storage: PubSubStorage) -> None:
+    def __init__(
+        self,
+        *,
+        storage: PubSubStorage,
+        publisher: PublisherServicer,
+    ) -> None:
         self._storage = storage
+        self._publisher = publisher  # used to register deliverable events
