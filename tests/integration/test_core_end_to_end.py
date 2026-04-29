@@ -3,17 +3,18 @@ import asyncio
 import httpx
 
 
-async def test_health_reports_both_services_healthy(emulator):
+async def test_health_reports_all_services_healthy(emulator):
     url = f"http://127.0.0.1:{emulator['admin_port']}"
     async with httpx.AsyncClient() as c:
         r = await c.get(f"{url}/_emulator/health")
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert set(body["services"].keys()) == {"gcs", "secret_manager", "bigquery"}
+    assert set(body["services"].keys()) == {"gcs", "secret_manager", "bigquery", "pubsub"}
     assert body["services"]["gcs"]["ok"] is True
     assert body["services"]["secret_manager"]["ok"] is True
     assert body["services"]["bigquery"]["ok"] is True
+    assert body["services"]["pubsub"]["ok"] is True
 
 
 async def test_services_endpoint_lists_both(emulator):
@@ -22,7 +23,7 @@ async def test_services_endpoint_lists_both(emulator):
         r = await c.get(f"{url}/_emulator/services")
     assert r.status_code == 200
     names = {s["name"] for s in r.json()["services"]}
-    assert names == {"gcs", "secret_manager", "bigquery"}
+    assert names == {"gcs", "secret_manager", "bigquery", "pubsub"}
 
 
 async def test_reset_all_succeeds(emulator):
