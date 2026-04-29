@@ -13,6 +13,7 @@ Add new entries under `[Unreleased]` as part of every PR that changes user-visib
 
 ### Added
 
+- **BigQuery:** `maxBadRecords` and `ignoreUnknownValues` are now honored on load jobs. Previously they were accepted but the load aborted on the first bad row. Now bad rows (REQUIRED-field violations, unknown fields when the flag is off, CSV column-count mismatches) are tolerated up to `maxBadRecords` (default `0`); the count surfaces in `statistics.load.badRecords`. `ignoreUnknownValues` strips schema-unknown keys from NDJSON rows and drops trailing extra columns from wide CSV rows.
 - **BigQuery:** GCS-URI load jobs — `client.load_table_from_uri("gs://bucket/path", ...)` now works for NDJSON and CSV, including glob patterns (`gs://b/dir/*.ndjson`, `gs://b/data/**`) and multi-URI lists. The BigQuery service resolves `gs://` URIs over HTTP against a configurable endpoint: `BIGQUERY_GCS_URI_ENDPOINT` → `STORAGE_EMULATOR_HOST` → loopback to the in-process gcp-local GCS service.
 - **GCS:** `GET /storage/v1/b/<bucket>/storageLayout` endpoint returning `kind=storage#storageLayout` so gcloud's preflight call no longer 404s.
 
@@ -33,7 +34,6 @@ The initial alpha covers three of the planned v1 services (BigQuery, GCS, Secret
 
 - BigQuery load jobs do not yet support binary source formats (Parquet / Avro / ORC). NDJSON and CSV are supported for both inline payloads and `gs://` source URIs.
 - BigQuery `statistics.totalBytesProcessed` always reports `0` — DuckDB does not expose an equivalent metric.
-- BigQuery `maxBadRecords` and `ignoreUnknownValues` on load jobs are accepted but treated as all-or-nothing (one bad row aborts the job).
 - BigQuery DATE / TIMESTAMP / JSON column coercion in CSV load jobs is pass-through; the emulator relies on DuckDB's implicit cast.
 - Authentication is not enforced on any service; clients must use `AnonymousCredentials`.
 

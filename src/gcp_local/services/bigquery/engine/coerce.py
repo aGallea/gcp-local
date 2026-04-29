@@ -12,16 +12,28 @@ from typing import Any
 from gcp_local.services.bigquery.models import FieldSchema
 
 
-def validate_row(payload: dict[str, Any], schema: list[FieldSchema]) -> list[str]:
-    """Return a list of error messages for the row; empty means valid."""
+def validate_row(
+    payload: dict[str, Any],
+    schema: list[FieldSchema],
+    *,
+    ignore_unknown_values: bool = False,
+) -> list[str]:
+    """Return a list of error messages for the row; empty means valid.
+
+    When ``ignore_unknown_values`` is True, keys not present in the schema
+    are silently accepted (they should be stripped by the caller before any
+    INSERT, since DuckDB will still reject extra columns). REQUIRED-field
+    presence is always enforced.
+    """
     errors: list[str] = []
     by_name = {f.name: f for f in schema}
     for f in schema:
         if f.mode == "REQUIRED" and payload.get(f.name) is None:
             errors.append(f"required field {f.name!r} is missing")
-    for key in payload:
-        if key not in by_name:
-            errors.append(f"unknown field {key!r}")
+    if not ignore_unknown_values:
+        for key in payload:
+            if key not in by_name:
+                errors.append(f"unknown field {key!r}")
     return errors
 
 
