@@ -12,6 +12,7 @@ This guide covers running `gcp-local` via Docker, docker-compose, and Kubernetes
 | GCS             | 4443 | REST; client honors `STORAGE_EMULATOR_HOST` |
 | BigQuery        | 9050 | REST; client honors `BIGQUERY_EMULATOR_HOST` |
 | Secret Manager  | 8086 | gRPC; no standard env var (use `client_options.api_endpoint`) |
+| Pub/Sub         | 8085 | gRPC; client honors `PUBSUB_EMULATOR_HOST` |
 
 ## Building the image
 
