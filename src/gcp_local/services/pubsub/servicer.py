@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import datetime as dt
 import itertools
 from collections import defaultdict
@@ -14,6 +15,7 @@ from gcp_local.services.pubsub.engine.backlog import (
     DeliveredMessage,
     SubscriptionBacklog,
 )
+from gcp_local.services.pubsub.engine.streaming import FlowControl
 from gcp_local.services.pubsub.errors import (
     InvalidArgument,
     PubSubError,
@@ -534,3 +536,138 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
                 )
             )
         return pubsub_pb2.PullResponse(received_messages=received)
+
+    async def StreamingPull(
+        self,
+        request_iterator,
+        context: grpc.aio.ServicerContext,
+    ):
+        """Bidirectional stream: yields ReceivedMessages, consumes ack/modack/flow updates.
+
+        The first request must include ``subscription`` and any flow-control
+        fields. A side coroutine drains follow-up requests and applies their
+        ``ack_ids`` / ``modify_deadline_*`` to the backlog, crediting the
+        flow-control budget on each ack or NACK (modack with delta=0).
+
+        On context cancel (``context.is_active() == False``) the consumer task
+        is cancelled and the generator exits cleanly.
+        """
+        # Pull the first request out of the iterator. gRPC hands us an async
+        # iterator; the test fixtures use plain async generators. Both expose
+        # ``__anext__``.
+        try:
+            first = await request_iterator.__anext__()
+        except StopAsyncIteration:
+            await _abort(
+                context,
+                InvalidArgument("StreamingPull requires at least one request"),
+            )
+        if not first.subscription:
+            await _abort(
+                context,
+                InvalidArgument("StreamingPull initial request must set subscription"),
+            )
+
+        try:
+            project, sub_id = _parse_subscription(first.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            topic_proj, topic_id = await self._resolve_topic(project, sub_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+
+        flow = FlowControl(
+            max_outstanding_messages=first.max_outstanding_messages or 0,
+            max_outstanding_bytes=first.max_outstanding_bytes or 0,
+        )
+        # Track in-flight (ack_id → bytes) so we can credit flow on ack/NACK.
+        in_flight_bytes: dict[str, int] = {}
+
+        async def _consume_client_requests() -> None:
+            async for req in request_iterator:
+                if req.ack_ids:
+                    async with lock:
+                        await backlog.acknowledge(list(req.ack_ids))
+                    for aid in req.ack_ids:
+                        flow.on_ack(in_flight_bytes.pop(aid, 0))
+                if req.modify_deadline_ack_ids:
+                    items = list(
+                        zip(
+                            req.modify_deadline_ack_ids,
+                            req.modify_deadline_seconds,
+                            strict=False,
+                        )
+                    )
+                    async with lock:
+                        await backlog.modify_ack_deadline(items)
+                    for aid, secs in items:
+                        if secs == 0:
+                            flow.on_ack(in_flight_bytes.pop(aid, 0))
+
+        consumer = asyncio.create_task(_consume_client_requests())
+
+        try:
+            while context.is_active():
+                async with lock:
+                    messages = await self._storage.get_messages(topic_proj, topic_id)
+                    # Compute per-round message budget. ``0`` means unlimited;
+                    # we cap each round at 100 to bound a single response.
+                    if flow.max_outstanding_messages:
+                        budget = flow.max_outstanding_messages - flow.in_flight_messages
+                    else:
+                        budget = 100
+                    if budget <= 0:
+                        delivered: list[DeliveredMessage] = []
+                    else:
+                        delivered = await backlog.pull(
+                            messages=messages,
+                            max_count=budget,
+                            now=dt.datetime.now(dt.UTC),
+                        )
+                if delivered:
+                    yieldable: list[DeliveredMessage] = []
+                    for d in delivered:
+                        msg_size = len(d.message.data)
+                        if not flow.can_yield(msg_size):
+                            # Push back: NACK so it redelivers when budget frees.
+                            async with lock:
+                                await backlog.modify_ack_deadline([(d.ack_id, 0)])
+                            continue
+                        flow.on_yield(msg_size)
+                        in_flight_bytes[d.ack_id] = msg_size
+                        yieldable.append(d)
+                    if yieldable:
+                        yield self._streaming_response(yieldable)
+                    continue
+                # Nothing to send — wait for a wakeup or context cancel.
+                backlog.deliverable.clear()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(backlog.deliverable.wait(), timeout=10.0)
+        finally:
+            consumer.cancel()
+            # Swallow cancellation and any consumer-side errors — the stream
+            # is already winding down.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await consumer
+
+    def _streaming_response(
+        self, delivered: list[DeliveredMessage]
+    ) -> pubsub_pb2.StreamingPullResponse:
+        from google.protobuf.timestamp_pb2 import Timestamp
+
+        rms: list[pubsub_pb2.ReceivedMessage] = []
+        for d in delivered:
+            ts = Timestamp()
+            ts.FromDatetime(d.message.publish_time)
+            rms.append(
+                pubsub_pb2.ReceivedMessage(
+                    ack_id=d.ack_id,
+                    message=pubsub_pb2.PubsubMessage(
+                        data=d.message.data,
+                        attributes=d.message.attributes,
+                        message_id=d.message.message_id,
+                        publish_time=ts,
+                        ordering_key=d.message.ordering_key or "",
+                    ),
+                )
+            )
+        return pubsub_pb2.StreamingPullResponse(received_messages=rms)
