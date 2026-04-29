@@ -92,31 +92,34 @@ docs/deployment.md                            # MODIFY: add 8085 to ports table
 - Create: `src/gcp_local/generated/google/pubsub/__init__.py` (empty)
 - Create: `src/gcp_local/generated/google/pubsub/v1/__init__.py` (empty)
 
-- [ ] **Step 1: Fetch the canonical pubsub.proto**
+- [ ] **Step 1: Fetch the canonical pubsub.proto + transitive schema.proto**
 
-The proto lives in googleapis at `google/pubsub/v1/pubsub.proto`. Fetch it from the upstream tag pinned by the installed `google-cloud-pubsub` (we'll use the v1 commit on master since the proto is API-stable):
+The proto lives in googleapis at `google/pubsub/v1/pubsub.proto`. It transitively imports `schema.proto` for `SchemaSettings.encoding` on `Topic`, so we must vendor both even though we never register `SchemaServiceServicer`. Fetch from the master branch since the protos are API-stable:
 
 ```bash
 mkdir -p protos/google/pubsub/v1
 curl -sSL -o protos/google/pubsub/v1/pubsub.proto \
   https://raw.githubusercontent.com/googleapis/googleapis/master/google/pubsub/v1/pubsub.proto
+curl -sSL -o protos/google/pubsub/v1/schema.proto \
+  https://raw.githubusercontent.com/googleapis/googleapis/master/google/pubsub/v1/schema.proto
 ```
 
-Verify the file starts with `syntax = "proto3";` and has `package google.pubsub.v1;` and contains `service Publisher` and `service Subscriber`. Do NOT fetch `schema.proto` — we are not implementing SchemaService.
+Verify `pubsub.proto` has `package google.pubsub.v1;` and contains `service Publisher` and `service Subscriber`. Verify `schema.proto` has `package google.pubsub.v1;` and contains `service SchemaService` and `message Schema`. (We won't register the SchemaService servicer — clients calling its RPCs will get `UNIMPLEMENTED` from grpc by default.)
 
 - [ ] **Step 2: Extend `scripts/gen_protos.sh` to generate pubsub stubs**
 
 Append to the script (do not remove the existing secret_manager block):
 
 ```bash
-# Pub/Sub
+# Pub/Sub (pubsub.proto + transitive schema.proto)
 python -m grpc_tools.protoc \
   --proto_path=protos \
   --proto_path="$EXTRA_PROTO_PATH" \
   --python_out="$OUT" \
   --pyi_out="$OUT" \
   --grpc_python_out="$OUT" \
-  protos/google/pubsub/v1/pubsub.proto
+  protos/google/pubsub/v1/pubsub.proto \
+  protos/google/pubsub/v1/schema.proto
 
 python - <<'PY'
 import pathlib, re
@@ -225,7 +228,7 @@ def test_build_subscription_name() -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["t", "t-name", "t.name", "t_name", "Name123", "with~plus+pct%20"],
+    ["top", "t-name", "t.name", "t_name", "Name123", "with~plus+pct%20"],
 )
 def test_validate_resource_id_accepts(name: str) -> None:
     validate_resource_id(name)  # does not raise
@@ -233,7 +236,7 @@ def test_validate_resource_id_accepts(name: str) -> None:
 
 @pytest.mark.parametrize(
     "name",
-    ["", "1starts-with-digit", "goog-prefixed", "has spaces", "bad/slash", "x" * 256],
+    ["", "ab", "1starts-with-digit", "goog-prefixed", "has spaces", "bad/slash", "x" * 256],
 )
 def test_validate_resource_id_rejects(name: str) -> None:
     with pytest.raises(InvalidName):

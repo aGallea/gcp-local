@@ -118,15 +118,20 @@ publisher.publish(topic_path, b"hello world").result()
 
 ### 3.4 gRPC stubs
 
-Same approach as Secret Manager: import the pre-generated servicer bases from the installed `google-cloud-pubsub` package rather than vendoring `.proto` files. We want the pb2_grpc servicer base classes, not the client-side transports. The exact module path is finalized during implementation by `grep -r 'class PublisherServicer' .venv/lib/.../google/` against the installed package; the shape will be:
+Same approach as Secret Manager (verified in `src/gcp_local/services/secret_manager/servicer.py`): vendor the `.proto` files under `protos/google/pubsub/v1/`, generate `pb2.py` / `pb2_grpc.py` stubs once into `src/gcp_local/generated/google/pubsub/v1/` via `scripts/gen_pubsub_protos.sh`, and commit the generated files. This keeps the runtime dep set unchanged (no `google-cloud-pubsub` at runtime — it stays test-only).
+
+Servicer subclasses look like:
 
 ```python
-from google.cloud.pubsub_v1.proto import pubsub_pb2_grpc  # actual path TBV
+from gcp_local.generated.google.pubsub.v1 import pubsub_pb2_grpc
+
 class PublisherServicer(pubsub_pb2_grpc.PublisherServicer): ...
 class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer): ...
 ```
 
-`google-cloud-pubsub` becomes a **runtime dependency** for this reason (same trade-off as `google-cloud-secret-manager`).
+The vendored `.proto` files come from googleapis (`google/pubsub/v1/{pubsub.proto, schema.proto}`). Both are required because `pubsub.proto` imports `schema.proto` for the `SchemaSettings.encoding` field on `Topic` — so the vendored `schema.proto` is a transitive dependency, not a deliberate choice to ship the schema service. We **do not** register `SchemaServiceServicer`; clients calling `SchemaService` RPCs get `UNIMPLEMENTED` from grpc by default (§2.3).
+
+`google-cloud-pubsub` is a **test-only** (dev) dependency, used by integration tests to drive the emulator. The runtime image does not import it.
 
 ## 4. Data model
 
