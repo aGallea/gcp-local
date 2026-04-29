@@ -5,7 +5,7 @@ import base64
 import datetime as dt
 import itertools
 from collections import defaultdict
-from typing import NoReturn, Protocol
+from typing import Any, NoReturn, Protocol
 
 import grpc
 
@@ -15,9 +15,10 @@ from gcp_local.services.pubsub.errors import (
     PubSubError,
     grpc_code_for,
 )
-from gcp_local.services.pubsub.models import MessageRecord, TopicRecord
+from gcp_local.services.pubsub.models import MessageRecord, SubscriptionRecord, TopicRecord
 from gcp_local.services.pubsub.names import (
     InvalidName,
+    parse_subscription_name,
     parse_topic_name,
     validate_resource_id,
 )
@@ -72,6 +73,52 @@ def _topic_proto_to_record(msg: pubsub_pb2.Topic) -> TopicRecord:
         message_storage_policy=None,
         kms_key_name=msg.kms_key_name or None,
         schema_settings=None,
+    )
+
+
+def _parse_subscription(name: str) -> tuple[str, str]:
+    project, sub_id = parse_subscription_name(name)
+    validate_resource_id(sub_id)
+    return project, sub_id
+
+
+def _sub_record_to_proto(rec: SubscriptionRecord) -> pubsub_pb2.Subscription:
+    proto = pubsub_pb2.Subscription(
+        name=f"projects/{rec.project}/subscriptions/{rec.subscription_id}",
+        topic=f"projects/{rec.topic_project}/topics/{rec.topic_id}",
+        ack_deadline_seconds=rec.ack_deadline_seconds,
+        enable_message_ordering=rec.enable_message_ordering,
+        filter=rec.filter,
+        labels=dict(rec.labels),
+        enable_exactly_once_delivery=rec.enable_exactly_once_delivery,
+    )
+    if rec.push_config is not None:
+        proto.push_config.CopyFrom(pubsub_pb2.PushConfig(**rec.push_config))
+    return proto
+
+
+def _sub_proto_to_record(msg: pubsub_pb2.Subscription) -> SubscriptionRecord:
+    sub_proj, sub_id = _parse_subscription(msg.name)
+    topic_proj, topic_id = _parse_topic(msg.topic)
+    push_config: dict[str, Any] | None = None
+    if msg.HasField("push_config"):
+        push_config = {"push_endpoint": msg.push_config.push_endpoint}
+        if msg.push_config.attributes:
+            push_config["attributes"] = dict(msg.push_config.attributes)
+    return SubscriptionRecord(
+        project=sub_proj,
+        subscription_id=sub_id,
+        topic_project=topic_proj,
+        topic_id=topic_id,
+        ack_deadline_seconds=msg.ack_deadline_seconds or 10,
+        enable_message_ordering=msg.enable_message_ordering,
+        push_config=push_config,
+        filter=msg.filter or "",
+        dead_letter_policy=None,
+        retry_policy=None,
+        labels=dict(msg.labels),
+        enable_exactly_once_delivery=msg.enable_exactly_once_delivery,
+        create_time=dt.datetime.now(dt.UTC),
     )
 
 
@@ -254,3 +301,102 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     ) -> None:
         self._storage = storage
         self._publisher = publisher  # used to register deliverable events
+
+    async def CreateSubscription(
+        self,
+        request: pubsub_pb2.Subscription,
+        context: grpc.aio.ServicerContext,
+    ) -> pubsub_pb2.Subscription:
+        try:
+            rec = _sub_proto_to_record(request)
+            await self._storage.create_subscription(rec)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _sub_record_to_proto(rec)
+
+    async def GetSubscription(
+        self,
+        request: pubsub_pb2.GetSubscriptionRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> pubsub_pb2.Subscription:
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            rec = await self._storage.get_subscription(project, sub_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _sub_record_to_proto(rec)
+
+    async def UpdateSubscription(
+        self,
+        request: pubsub_pb2.UpdateSubscriptionRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> pubsub_pb2.Subscription:
+        try:
+            project, sub_id = _parse_subscription(request.subscription.name)
+            existing = await self._storage.get_subscription(project, sub_id)
+            paths = set(request.update_mask.paths)
+            updated = SubscriptionRecord(
+                project=existing.project,
+                subscription_id=existing.subscription_id,
+                topic_project=existing.topic_project,
+                topic_id=existing.topic_id,
+                ack_deadline_seconds=(
+                    request.subscription.ack_deadline_seconds
+                    if "ack_deadline_seconds" in paths
+                    else existing.ack_deadline_seconds
+                ),
+                enable_message_ordering=existing.enable_message_ordering,
+                push_config=existing.push_config,
+                filter=existing.filter,
+                dead_letter_policy=existing.dead_letter_policy,
+                retry_policy=existing.retry_policy,
+                labels=(
+                    dict(request.subscription.labels)
+                    if "labels" in paths
+                    else dict(existing.labels)
+                ),
+                enable_exactly_once_delivery=existing.enable_exactly_once_delivery,
+                create_time=existing.create_time,
+            )
+            await self._storage.update_subscription(updated)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _sub_record_to_proto(updated)
+
+    async def DeleteSubscription(
+        self,
+        request: pubsub_pb2.DeleteSubscriptionRequest,
+        context: grpc.aio.ServicerContext,
+    ):
+        from google.protobuf import empty_pb2
+
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            await self._storage.delete_subscription(project, sub_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return empty_pb2.Empty()
+
+    async def ListSubscriptions(
+        self,
+        request: pubsub_pb2.ListSubscriptionsRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> pubsub_pb2.ListSubscriptionsResponse:
+        if not request.project.startswith("projects/"):
+            await _abort(context, InvalidArgument(f"Invalid project: {request.project!r}"))
+        project = request.project[len("projects/") :]
+        try:
+            offset = _decode_token(request.page_token)
+        except InvalidArgument as e:
+            await _abort(context, e)
+        page_size = request.page_size or 100
+        rows = sorted(
+            await self._storage.list_subscriptions(project),
+            key=lambda r: r.subscription_id,
+        )
+        slice_ = rows[offset : offset + page_size]
+        next_token = _encode_token(offset + page_size) if offset + page_size < len(rows) else ""
+        return pubsub_pb2.ListSubscriptionsResponse(
+            subscriptions=[_sub_record_to_proto(r) for r in slice_],
+            next_page_token=next_token,
+        )
