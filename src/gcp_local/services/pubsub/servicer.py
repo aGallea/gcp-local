@@ -475,6 +475,40 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
         except (PubSubError, InvalidName) as e:
             await _abort(context, e)
 
+    async def Acknowledge(
+        self,
+        request: pubsub_pb2.AcknowledgeRequest,
+        context: grpc.aio.ServicerContext,
+    ):
+        from google.protobuf import empty_pb2
+
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            async with lock:
+                await backlog.acknowledge(list(request.ack_ids))
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return empty_pb2.Empty()
+
+    async def ModifyAckDeadline(
+        self,
+        request: pubsub_pb2.ModifyAckDeadlineRequest,
+        context: grpc.aio.ServicerContext,
+    ):
+        from google.protobuf import empty_pb2
+
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            async with lock:
+                await backlog.modify_ack_deadline(
+                    [(aid, request.ack_deadline_seconds) for aid in request.ack_ids]
+                )
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return empty_pb2.Empty()
+
     async def _resolve_topic(self, project: str, sub_id: str) -> tuple[str, str]:
         """Return the (topic_project, topic_id) pair for a subscription."""
         sub = await self._storage.get_subscription(project, sub_id)
