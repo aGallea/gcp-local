@@ -38,6 +38,42 @@ for p in out.glob('*.py'):
         print(f'rewrote imports in {p}')
 PY
 
+# Wrap the bare DESCRIPTOR = AddSerializedFile call in a try/except
+# FindFileContainingSymbol fallback. Newer grpcio-tools (>=1.65) emit a bare
+# call that raises on duplicate symbols; older versions emitted the wrapper.
+# We need the wrapper because google-cloud-secret-manager (a dev dep, used by
+# integration tests) ships its own copy of the same descriptors — both register
+# google.cloud.secretmanager.v1.Secret in the global pool, and without the
+# fallback the second registration aborts pytest collection across the suite.
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/cloud/secretmanager/v1')
+fallback_symbols = {
+    'resources_pb2.py': 'google.cloud.secretmanager.v1.Secret',
+    'service_pb2.py': 'google.cloud.secretmanager.v1.SecretManagerService',
+}
+pattern = re.compile(
+    r'^DESCRIPTOR = (_descriptor_pool\.Default\(\)\.AddSerializedFile\(.+?\))\n',
+    re.MULTILINE | re.DOTALL,
+)
+for fname, symbol in fallback_symbols.items():
+    p = out / fname
+    text = p.read_text()
+    m = pattern.search(text)
+    if not m:
+        continue  # already wrapped, or shape changed
+    wrapper = (
+        f"try:\n"
+        f"  DESCRIPTOR = {m.group(1)}\n"
+        f"except TypeError:\n"
+        f"  DESCRIPTOR = _descriptor_pool.Default().FindFileContainingSymbol(\n"
+        f"    '{symbol}'\n"
+        f"  )\n"
+    )
+    p.write_text(text[:m.start()] + wrapper + text[m.end():])
+    print(f'wrapped DESCRIPTOR in {p}')
+PY
+
 echo 'generated:'
 ls -1 "src/gcp_local/generated/google/cloud/secretmanager/v1/"
 
