@@ -172,9 +172,9 @@ Services we know we'll want eventually but aren't on the v1 commitment. Same col
 For each Stable/Alpha service, a short subsection listing known gaps with one-liner pointers. Initial content:
 
 - **BigQuery**
-  - GCS-URI load jobs (`load_table_from_uri('gs://...')`) — deferred from PR #5; needs cross-service BQ↔GCS wiring.
-  - `maxBadRecords` / `ignoreUnknownValues` on load jobs — accepted but treated as all-or-nothing today.
-  - DATE/TIMESTAMP/JSON column coercion in CSV is pass-through (relies on DuckDB implicit cast).
+  - ~~GCS-URI load jobs (`load_table_from_uri('gs://...')`)~~ — *shipped (PR #8)*.
+  - ~~`maxBadRecords` / `ignoreUnknownValues` on load jobs~~ — *shipped (PR #9)*: bad rows tolerated up to the threshold; counts reported in `statistics.load.badRecords`.
+  - ~~CSV DATE/TIMESTAMP/DATETIME/TIME/JSON coercion~~ — *shipped*: the CSV path now coerces to typed Python objects. NDJSON for these types still relies on DuckDB's implicit cast.
   - `statistics.totalBytesProcessed` always reports 0 (DuckDB has no equivalent metric).
 - **GCS** — populate from gaps already documented in `docs/services/gcs.md`'s "What's not emulated" section.
 - **Secret Manager** — populate from the spec at `docs/superpowers/specs/2026-04-24-gcp-local-secret-manager-design.md` once the usage doc is written.

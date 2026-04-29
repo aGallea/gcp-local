@@ -123,7 +123,11 @@ def _scalar_to_wire(value: Any, bq_type: str) -> Any:
             ts: dt.datetime = value
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=dt.UTC)
-            return f"{ts.timestamp():.6f}"
+            # google-cloud-bigquery's CellDataParser parses TIMESTAMP cells via
+            # `_datetime_from_microseconds(int(value))`, so the wire value must
+            # be a string-encoded integer count of microseconds since epoch.
+            # A float-seconds form (e.g. "1705322096.000000") makes int() raise.
+            return str(round(ts.timestamp() * 1_000_000))
         case "DATETIME":
             return value.isoformat(sep="T", timespec="microseconds")
         case _:

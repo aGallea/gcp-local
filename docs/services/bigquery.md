@@ -91,6 +91,26 @@ job.result()
 
 For NDJSON, the emulator walks the first 100 rows and widens types per top-level key (`BOOL → INT64 → FLOAT64 → STRING`; nested objects → `RECORD`; arrays → `REPEATED`). For CSV, the emulator sniffs each column over up to 100 rows; without a header (`skip_leading_rows=0`), columns are named `string_field_0`, `string_field_1`, ...
 
+### CSV cell formats
+
+CSV cells are coerced to typed Python values before insert (so malformed inputs surface as BQ-shaped bad-records under `maxBadRecords` rather than as DuckDB cast errors). Accepted formats per column type:
+
+| Column type | Accepted CSV cell format |
+|---|---|
+| `INT64` / `INTEGER` | Decimal integer literal (`42`, `-7`). |
+| `FLOAT64` / `NUMERIC` / `BIGNUMERIC` | Anything `float()` accepts. |
+| `BOOL` | `t` / `true` / `1` / `yes` / `y` for true; `f` / `false` / `0` / `no` / `n` for false. Case-insensitive. |
+| `DATE` | `YYYY-MM-DD`. |
+| `TIME` | `HH:MM:SS[.ffffff]`. |
+| `DATETIME` | `YYYY-MM-DD[ T]HH:MM:SS[.ffffff]` — no timezone (a `+HH:MM` or `Z` is rejected). |
+| `TIMESTAMP` | `YYYY-MM-DDTHH:MM:SSZ`, `... UTC`, `...+HH:MM`, or naive (assumed UTC). |
+| `JSON` | Any valid JSON value. |
+| `STRING` / `BYTES` | The raw cell. |
+
+Empty cells become `NULL` regardless of column type — so an empty cell on a `REQUIRED` column flows through as a `required field missing` bad-record rather than crashing with a coercion error.
+
+> NDJSON cells for `DATE` / `TIMESTAMP` / `DATETIME` / `TIME` are not yet coerced — they pass through to DuckDB as strings and rely on DuckDB's implicit cast. Tracked in [`ROADMAP.md`](../../ROADMAP.md).
+
 ### Write dispositions
 
 | `write_disposition` | Behavior |
