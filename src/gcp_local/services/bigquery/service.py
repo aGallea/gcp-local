@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import ClassVar
 
@@ -11,6 +12,7 @@ from gcp_local.core.context import Context
 from gcp_local.core.service import HealthStatus, Port
 from gcp_local.services.bigquery.app import build_app
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
+from gcp_local.services.bigquery.engine.gcs_uri import GcsUriFetcher
 from gcp_local.services.bigquery.engine.jobs import JobRunner
 from gcp_local.services.bigquery.engine.loads import LoadRunner
 from gcp_local.services.bigquery.engine.resumable import ResumableSessionStore
@@ -19,6 +21,7 @@ from gcp_local.services.bigquery.storage import BigQueryStorage
 log = logging.getLogger(__name__)
 
 _DEFAULT_PORT = 9050
+_GCS_DEFAULT_PORT = 4443
 
 
 class BigQueryService:
@@ -44,7 +47,12 @@ class BigQueryService:
         await self._connection.startup()
         self._storage = BigQueryStorage(self._connection)
         self._runner = JobRunner(connection=self._connection, storage=self._storage)
-        self._load_runner = LoadRunner(connection=self._connection, storage=self._storage)
+        gcs_endpoint = self._resolve_gcs_endpoint(ctx)
+        self._load_runner = LoadRunner(
+            connection=self._connection,
+            storage=self._storage,
+            gcs_fetcher=GcsUriFetcher(endpoint=gcs_endpoint),
+        )
         self._resumables = ResumableSessionStore()
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._app = build_app(
@@ -107,3 +115,19 @@ class BigQueryService:
             db_path = Path(ctx.data_dir) / "bigquery.duckdb"
             return BigQueryConnection.on_disk(db_path)
         return BigQueryConnection.in_memory()
+
+    def _resolve_gcs_endpoint(self, ctx: Context) -> str:
+        """URL the BQ load-job runner uses to resolve `gs://` sourceUris.
+
+        Resolution order: BIGQUERY_GCS_URI_ENDPOINT (BQ-specific override) →
+        STORAGE_EMULATOR_HOST (the Google client-library convention) →
+        loopback to the in-process GCS service on its configured port.
+        """
+        override = os.environ.get("BIGQUERY_GCS_URI_ENDPOINT")
+        if override:
+            return override
+        storage_host = os.environ.get("STORAGE_EMULATOR_HOST")
+        if storage_host:
+            return storage_host if "://" in storage_host else f"http://{storage_host}"
+        gcs_port = ctx.port_overrides.get("gcs", _GCS_DEFAULT_PORT)
+        return f"http://127.0.0.1:{gcs_port}"

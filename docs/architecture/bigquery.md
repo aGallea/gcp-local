@@ -130,25 +130,31 @@ JSON operators (`JSON_EXTRACT`, `JSON_EXTRACT_SCALAR`, `JSON_VALUE`, `JSON_QUERY
 
 ## Load jobs
 
-`/upload/bigquery/v2/projects/{p}/jobs` — a separate URL prefix from the API endpoint, served by `routes/uploads.py`. Two upload styles share the endpoint:
+Load jobs reach the emulator over three entry points, all of which converge on the same `LoadRunner.run_load` orchestrator:
 
-- **`POST?uploadType=multipart`** — `multipart/related` body with two parts: an `application/json` job-config part and the data payload. Parsed via stdlib `email.message_from_bytes` (not `email.policy.default`, which mangles binary payloads). The data part is handed to `LoadRunner.run_load(project, job_id, load_config, data)`.
-- **`POST?uploadType=resumable`** — initiates a session. Returns 200 with `Location: <base>?upload_id=<sid>` and an empty body. The session lives in `engine/resumable.py::ResumableSessionStore` (an in-memory dict, swept by the existing service-level sweeper at `ttl=600` seconds). Subsequent `PUT?upload_id=<sid>` requests append chunks honoring `Content-Range`. While incomplete: 308 with `Range: bytes=0-<end>`. On the final chunk: run the load, return 200 + Job. `DELETE?upload_id=<sid>` drops the session idempotently.
+- **`POST /upload/bigquery/v2/projects/{p}/jobs?uploadType=multipart`** — `multipart/related` body with two parts: an `application/json` job-config part and the data payload. Parsed via stdlib `email.message_from_bytes` (not `email.policy.default`, which mangles binary payloads). The data part is handed to `LoadRunner.run_load`.
+- **`POST /upload/bigquery/v2/projects/{p}/jobs?uploadType=resumable`** — initiates a session. Returns 200 with `Location: <base>?upload_id=<sid>` and an empty body. The session lives in `engine/resumable.py::ResumableSessionStore` (an in-memory dict, swept by the existing service-level sweeper at `ttl=600` seconds). Subsequent `PUT?upload_id=<sid>` requests append chunks honoring `Content-Range`. While incomplete: 308 with `Range: bytes=0-<end>`. On the final chunk: run the load, return 200 + Job. `DELETE?upload_id=<sid>` drops the session idempotently.
+- **`POST /bigquery/v2/projects/{p}/jobs`** with `configuration.load` (no upload body) — `routes/jobs.py::insert_job` dispatches the load runner with `data=b""` and lets it fetch from `configuration.load.sourceUris` instead.
+
+The first two paths share `routes/uploads.py::run_load_job`, which is also called by `routes/jobs.py` for the GCS-URI path so the JobRecord persistence and `register_external` step are identical across all three entry points.
 
 `LoadRunner.run_load` (in `engine/loads.py`) is the orchestrator:
 
 1. Validate destination + `sourceFormat` (NDJSON or CSV; PARQUET / AVRO / ORC / DATASTORE_BACKUP rejected).
-2. Parse the data: `_parse_ndjson` (line-by-line `json.loads`) or `_parse_csv` (stdlib `csv.reader` with dialect from `fieldDelimiter` / `quote` / `skipLeadingRows` / `nullMarker` / `encoding`).
-3. Resolve the schema:
+2. Resolve the source bytes:
+   - If `configuration.load.sourceUris` is present, hand the list to `engine/gcs_uri.py::GcsUriFetcher.fetch_concat`. The fetcher parses each `gs://bucket/object` URI, expands glob patterns (`*`, `?`, `[...]`, `**`) by calling the GCS list-objects REST API at the configured endpoint, deduplicates resolved `(bucket, name)` pairs across the URI list while preserving order, downloads each object via `?alt=media`, and returns the concatenated bytes plus the file count (used as `statistics.load.inputFiles`). The endpoint is resolved once at service startup (`service.py::_resolve_gcs_endpoint`) in this order: `BIGQUERY_GCS_URI_ENDPOINT` → `STORAGE_EMULATOR_HOST` → `http://127.0.0.1:<gcs_port>` (loopback to the in-process gcp-local GCS service via `ctx.port_overrides`). All fetch / list / download failures map to `reason: invalid`.
+   - Otherwise the inline `data` payload from the upload path is used as-is.
+3. Parse the data: `_parse_ndjson` (line-by-line `json.loads`) or `_parse_csv` (stdlib `csv.reader` with dialect from `fieldDelimiter` / `quote` / `skipLeadingRows` / `nullMarker` / `encoding`).
+4. Resolve the schema:
    - explicit `configuration.load.schema` if provided → `parse_table_schema`
    - else `autodetect=True` → `engine/autodetect.py::autodetect_ndjson` or `autodetect_csv`
    - else fall back to the existing table's schema from the catalog
    - else fail with `reason: invalid`
-4. Enforce `createDisposition`: `CREATE_IF_NEEDED` materializes the table from the resolved schema; `CREATE_NEVER` fails with `reason: notFound`.
-5. Apply `writeDisposition`: `WRITE_APPEND` is a no-op pre-step; `WRITE_TRUNCATE` runs `DELETE FROM` first; `WRITE_EMPTY` checks `SELECT 1 ... LIMIT 1` and fails with `reason: duplicate` on a non-empty target. `WRITE_TRUNCATE` is wrapped in an explicit `BEGIN ... COMMIT` (with `ROLLBACK` on failure) so a row-validation failure after the DELETE leaves the original rows intact — this matches spec §8.2's transactional guarantee.
-6. Validate every row up front (load jobs are all-or-nothing, unlike `insertAll`'s `insertErrors[]` per-row reporting).
-7. Run the same batched `INSERT INTO ... VALUES (...),(...),...` shape as `insertAll`.
-8. Return a `JobRecord(job_type="LOAD", load_config=..., load_stats={inputFiles, inputFileBytes, outputRows, outputBytes, badRecords})`. The runner registers the record on the shared `JobRunner` via `register_external` so it's visible to subsequent `jobs.get` / `jobs.list` calls.
+5. Enforce `createDisposition`: `CREATE_IF_NEEDED` materializes the table from the resolved schema; `CREATE_NEVER` fails with `reason: notFound`.
+6. Apply `writeDisposition`: `WRITE_APPEND` is a no-op pre-step; `WRITE_TRUNCATE` runs `DELETE FROM` first; `WRITE_EMPTY` checks `SELECT 1 ... LIMIT 1` and fails with `reason: duplicate` on a non-empty target. `WRITE_TRUNCATE` is wrapped in an explicit `BEGIN ... COMMIT` (with `ROLLBACK` on failure) so a row-validation failure after the DELETE leaves the original rows intact — this matches spec §8.2's transactional guarantee.
+7. Validate every row up front (load jobs are all-or-nothing, unlike `insertAll`'s `insertErrors[]` per-row reporting).
+8. Run the same batched `INSERT INTO ... VALUES (...),(...),...` shape as `insertAll`.
+9. Return a `JobRecord(job_type="LOAD", load_config=..., load_stats={inputFiles, inputFileBytes, outputRows, outputBytes, badRecords})`. The runner registers the record on the shared `JobRunner` via `register_external` so it's visible to subsequent `jobs.get` / `jobs.list` calls.
 
 CSV cell coercion (`engine/loads.py::_coerce_csv_cell`) converts strings to int / float / bool per the resolved schema; DATE / TIMESTAMP / JSON columns pass through as strings and rely on DuckDB's implicit cast.
 

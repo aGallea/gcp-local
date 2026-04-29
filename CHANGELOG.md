@@ -13,6 +13,7 @@ Add new entries under `[Unreleased]` as part of every PR that changes user-visib
 
 ### Added
 
+- **BigQuery:** GCS-URI load jobs — `client.load_table_from_uri("gs://bucket/path", ...)` now works for NDJSON and CSV, including glob patterns (`gs://b/dir/*.ndjson`, `gs://b/data/**`) and multi-URI lists. The BigQuery service resolves `gs://` URIs over HTTP against a configurable endpoint: `BIGQUERY_GCS_URI_ENDPOINT` → `STORAGE_EMULATOR_HOST` → loopback to the in-process gcp-local GCS service.
 - **GCS:** `GET /storage/v1/b/<bucket>/storageLayout` endpoint returning `kind=storage#storageLayout` so gcloud's preflight call no longer 404s.
 
 ## [0.1.0-alpha] — 2026-04-26
@@ -30,7 +31,7 @@ The initial alpha covers three of the planned v1 services (BigQuery, GCS, Secret
 
 ### Known limitations
 
-- BigQuery load jobs accept inline payloads only (NDJSON / CSV). `gs://` source URIs and binary formats (Parquet / Avro / ORC) are not yet supported.
+- BigQuery load jobs do not yet support binary source formats (Parquet / Avro / ORC). NDJSON and CSV are supported for both inline payloads and `gs://` source URIs.
 - BigQuery `statistics.totalBytesProcessed` always reports `0` — DuckDB does not expose an equivalent metric.
 - BigQuery `maxBadRecords` and `ignoreUnknownValues` on load jobs are accepted but treated as all-or-nothing (one bad row aborts the job).
 - BigQuery DATE / TIMESTAMP / JSON column coercion in CSV load jobs is pass-through; the emulator relies on DuckDB's implicit cast.

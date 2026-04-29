@@ -15,7 +15,8 @@ from collections.abc import Callable
 import pytest
 from google.api_core import exceptions as gax_exceptions
 from google.auth import credentials as ga_credentials
-from google.cloud import bigquery
+from google.auth.credentials import AnonymousCredentials
+from google.cloud import bigquery, storage
 from google.cloud.bigquery import (
     DatasetReference,
     SchemaField,
@@ -366,3 +367,131 @@ async def test_load_table_resumable_large_payload(emulator: dict[str, int]) -> N
         )
     )
     assert count[0]["c"] == 25_000
+
+
+def _gcs_client(emulator: dict[str, int]) -> storage.Client:
+    # Don't touch STORAGE_EMULATOR_HOST here: the BigQuery service captures the
+    # GCS endpoint from the environment at startup, so a stray env var leaking
+    # between tests would point a freshly booted BQ at a dead GCS port from a
+    # previous test's emulator. The api_endpoint client_option is enough.
+    return storage.Client(
+        project="test-project",
+        credentials=AnonymousCredentials(),
+        client_options={"api_endpoint": f"http://127.0.0.1:{emulator['gcs_port']}"},
+    )
+
+
+async def _upload(gcs: storage.Client, bucket_name: str, name: str, data: bytes) -> None:
+    """Upload `data` to gs://bucket_name/name, creating the bucket if needed."""
+
+    def _do() -> None:
+        try:
+            bucket = gcs.get_bucket(bucket_name)
+        except gax_exceptions.NotFound:
+            bucket = gcs.create_bucket(bucket_name)
+        bucket.blob(name).upload_from_string(data)
+
+    await _run(_do)
+
+
+@pytest.mark.asyncio
+async def test_load_table_from_uri_ndjson(emulator: dict[str, int]) -> None:
+    bq = _client(emulator)
+    gcs = _gcs_client(emulator)
+    await _upload(gcs, "bq-load-src", "rows.ndjson", b'{"id":1,"name":"a"}\n{"id":2,"name":"b"}\n')
+    ds_ref = DatasetReference("test-project", "ds_load_uri")
+    await _run(lambda: bq.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "rows")
+    schema = [SchemaField("id", "INT64"), SchemaField("name", "STRING")]
+    job_config = bigquery.LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
+    job = await _run(
+        lambda: bq.load_table_from_uri(
+            "gs://bq-load-src/rows.ndjson", table_ref, job_config=job_config
+        )
+    )
+    await _run(lambda: job.result())
+    out = await _run(
+        lambda: list(
+            bq.query("SELECT id, name FROM `test-project.ds_load_uri.rows` ORDER BY id").result()
+        )
+    )
+    assert [(r["id"], r["name"]) for r in out] == [(1, "a"), (2, "b")]
+
+
+@pytest.mark.asyncio
+async def test_load_table_from_uri_glob_and_multi(emulator: dict[str, int]) -> None:
+    bq = _client(emulator)
+    gcs = _gcs_client(emulator)
+    await _upload(gcs, "bq-glob", "part/a.ndjson", b'{"id":1}\n')
+    await _upload(gcs, "bq-glob", "part/b.ndjson", b'{"id":2}\n')
+    await _upload(gcs, "bq-glob", "part/c.ndjson", b'{"id":3}\n')
+    await _upload(gcs, "bq-glob", "extra/d.ndjson", b'{"id":4}\n')
+    ds_ref = DatasetReference("test-project", "ds_load_glob")
+    await _run(lambda: bq.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "rows")
+    schema = [SchemaField("id", "INT64")]
+    job_config = bigquery.LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
+    # Mix of glob + explicit URI exercises both code paths and dedupe.
+    job = await _run(
+        lambda: bq.load_table_from_uri(
+            ["gs://bq-glob/part/*.ndjson", "gs://bq-glob/extra/d.ndjson"],
+            table_ref,
+            job_config=job_config,
+        )
+    )
+    result = await _run(lambda: job.result())
+    assert result.input_files == 4
+    rows = await _run(
+        lambda: list(
+            bq.query("SELECT id FROM `test-project.ds_load_glob.rows` ORDER BY id").result()
+        )
+    )
+    assert [r["id"] for r in rows] == [1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_load_table_from_uri_csv(emulator: dict[str, int]) -> None:
+    bq = _client(emulator)
+    gcs = _gcs_client(emulator)
+    await _upload(gcs, "bq-csv-src", "rows.csv", b"id,name\n1,alice\n2,bob\n")
+    ds_ref = DatasetReference("test-project", "ds_load_uri_csv")
+    await _run(lambda: bq.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "rows")
+    schema = [SchemaField("id", "INT64"), SchemaField("name", "STRING")]
+    job_config = bigquery.LoadJobConfig(
+        schema=schema,
+        source_format="CSV",
+        skip_leading_rows=1,
+    )
+    job = await _run(
+        lambda: bq.load_table_from_uri("gs://bq-csv-src/rows.csv", table_ref, job_config=job_config)
+    )
+    await _run(lambda: job.result())
+    rows = await _run(
+        lambda: list(
+            bq.query(
+                "SELECT id, name FROM `test-project.ds_load_uri_csv.rows` ORDER BY id"
+            ).result()
+        )
+    )
+    assert [(r["id"], r["name"]) for r in rows] == [(1, "alice"), (2, "bob")]
+
+
+@pytest.mark.asyncio
+async def test_load_table_from_uri_missing_object(emulator: dict[str, int]) -> None:
+    bq = _client(emulator)
+    gcs = _gcs_client(emulator)
+    # Create the bucket so the failure is on the object, not the bucket.
+    await _run(lambda: gcs.create_bucket("bq-miss"))
+    ds_ref = DatasetReference("test-project", "ds_load_miss")
+    await _run(lambda: bq.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "rows")
+    schema = [SchemaField("id", "INT64")]
+    job_config = bigquery.LoadJobConfig(schema=schema, source_format="NEWLINE_DELIMITED_JSON")
+    with pytest.raises(gax_exceptions.GoogleAPICallError):
+        job = await _run(
+            lambda: bq.load_table_from_uri(
+                "gs://bq-miss/nope.ndjson", table_ref, job_config=job_config
+            )
+        )
+        await _run(lambda: job.result())

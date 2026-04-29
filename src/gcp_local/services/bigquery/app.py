@@ -37,7 +37,7 @@ def build_app(
 
     app.include_router(datasets_router(storage))
     app.include_router(tables_router(storage))
-    app.include_router(jobs_router(runner))
+    app.include_router(jobs_router(runner, load_runner))
     app.include_router(tabledata_router(storage))
     app.include_router(uploads_router(runner, load_runner, resumables))
     return app

@@ -15,12 +15,13 @@ Default port: **9050**.
 - DML: `INSERT`, `UPDATE`, `DELETE`, `MERGE`
 - Streaming inserts: `tabledata.insertAll` — rows immediately visible
 - Inline-payload load jobs: `client.load_table_from_json(...)` and `client.load_table_from_file(..., source_format="NEWLINE_DELIMITED_JSON" | "CSV")` (see [Load jobs](#load-jobs))
+- GCS-URI load jobs: `client.load_table_from_uri("gs://bucket/path", ...)` for NDJSON and CSV, including globs (`gs://b/*.ndjson`) and multi-URI lists
 - `INFORMATION_SCHEMA` views: `TABLES`, `COLUMNS`, `SCHEMATA`
 - Multi-project namespacing: different project IDs share one DuckDB file but are isolated
 
 ## What's not emulated (v1)
 
-- Load jobs sourcing from `gs://` URIs, or from binary formats (Parquet, Avro, ORC, Datastore)
+- Load jobs from binary formats (Parquet, Avro, ORC, Datastore)
 - Copy jobs, extract jobs
 - Table snapshots, clones, time-travel (`FOR SYSTEM_TIME AS OF …`)
 - Materialized views, scheduled queries, routines (UDFs, stored procs), models
@@ -38,7 +39,7 @@ Default port: **9050**.
 
 ## Load jobs
 
-The emulator supports **inline-payload load jobs** — `client.load_table_from_json(...)` and `client.load_table_from_file(..., source_format=NEWLINE_DELIMITED_JSON | CSV)` work unchanged. GCS-URI loads (`source_uris=["gs://..."]`) and binary formats (Parquet, Avro, ORC) are not supported in v1.
+The emulator supports **inline-payload load jobs** — `client.load_table_from_json(...)` and `client.load_table_from_file(..., source_format=NEWLINE_DELIMITED_JSON | CSV)` work unchanged. **GCS-URI loads** — `client.load_table_from_uri("gs://...", ...)` — also work for NDJSON and CSV (see [GCS-URI loads](#gcs-uri-loads) below). Binary source formats (Parquet, Avro, ORC) are not supported in v1.
 
 ### Inline NDJSON
 
@@ -108,6 +109,43 @@ For NDJSON, the emulator walks the first 100 rows and widens types per top-level
 ### Large payloads
 
 The official client automatically switches from a single multipart POST to a chunked resumable upload once the payload exceeds `_DEFAULT_CHUNKSIZE` (about 5 MiB). The emulator handles both — large `load_table_from_json` calls work with no extra configuration.
+
+### GCS-URI loads
+
+`client.load_table_from_uri(...)` reads NDJSON or CSV objects from GCS. By default the emulator's BigQuery service resolves `gs://` URIs against its own in-process GCS service, so co-running both services is enough for cross-service tests.
+
+```python
+from google.cloud.bigquery import LoadJobConfig, SchemaField
+
+# Single URI:
+job = bq.load_table_from_uri(
+    "gs://my-bucket/data/rows.ndjson",
+    table_ref,
+    job_config=LoadJobConfig(
+        schema=[SchemaField("id", "INT64"), SchemaField("name", "STRING")],
+        source_format="NEWLINE_DELIMITED_JSON",
+    ),
+)
+job.result()
+
+# Globs and multi-URI also work; objects are concatenated in the order they
+# resolve, glob matches are deduped against explicit URIs:
+bq.load_table_from_uri(
+    ["gs://my-bucket/part/*.ndjson", "gs://my-bucket/extra/late.ndjson"],
+    table_ref,
+    job_config=...,
+).result()
+```
+
+Glob characters (`*`, `?`, `[...]`, `**`) are expanded by listing the bucket via the GCS REST API. `**` matches across `/`, just like `*` does in Cloud Storage's wildcard semantics.
+
+**Pointing BQ at a different GCS host.** Set one of these (in order of precedence) before starting the emulator:
+
+| Variable | When to use |
+|---|---|
+| `BIGQUERY_GCS_URI_ENDPOINT` | BQ-only override (e.g. point at a separate GCS emulator) |
+| `STORAGE_EMULATOR_HOST` | Standard Google client convention; honored if the BQ-specific override isn't set |
+| _(unset)_ | Defaults to `http://127.0.0.1:<gcs_port>` — the in-process gcp-local GCS service |
 
 ---
 

@@ -17,6 +17,7 @@ from gcp_local.services.bigquery.engine.autodetect import (
 )
 from gcp_local.services.bigquery.engine.coerce import row_to_values, validate_row
 from gcp_local.services.bigquery.engine.connection import BigQueryConnection
+from gcp_local.services.bigquery.engine.gcs_uri import GcsUriError, GcsUriFetcher
 from gcp_local.services.bigquery.models import (
     FieldSchema,
     JobRecord,
@@ -39,9 +40,15 @@ _SUPPORTED_CSV_ENCODINGS = {"UTF-8", "UTF8", "ISO-8859-1", "LATIN-1"}
 class LoadRunner:
     """Executes load jobs against the shared BigQuery DuckDB connection."""
 
-    def __init__(self, connection: BigQueryConnection, storage: BigQueryStorage) -> None:
+    def __init__(
+        self,
+        connection: BigQueryConnection,
+        storage: BigQueryStorage,
+        gcs_fetcher: GcsUriFetcher | None = None,
+    ) -> None:
         self._conn = connection
         self._storage = storage
+        self._gcs_fetcher = gcs_fetcher
 
     async def run_load(
         self,
@@ -49,9 +56,10 @@ class LoadRunner:
         project: str,
         job_id: str,
         load_config: dict[str, Any],
-        data: bytes,
+        data: bytes = b"",
     ) -> JobRecord:
         start = now_epoch_ms_str()
+        input_files = 1
         try:
             dest = _require_destination(load_config)
             source_format = (load_config.get("sourceFormat") or "").upper()
@@ -64,6 +72,17 @@ class LoadRunner:
                     "invalid",
                     f"Unsupported sourceFormat: {source_format!r}",
                 )
+            source_uris = load_config.get("sourceUris") or []
+            if source_uris:
+                if self._gcs_fetcher is None:
+                    raise _LoadError(
+                        "invalid",
+                        "sourceUris loads require a configured GCS fetcher",
+                    )
+                try:
+                    data, input_files = await self._gcs_fetcher.fetch_concat(source_uris)
+                except GcsUriError as e:
+                    raise _LoadError("invalid", str(e)) from e
             if source_format == "NEWLINE_DELIMITED_JSON":
                 rows = _parse_ndjson(data)
                 schema = await self._resolve_schema_ndjson(load_config, dest, rows)
@@ -92,6 +111,7 @@ class LoadRunner:
                 start=start,
                 dest=dest,
                 input_bytes=len(data),
+                input_files=input_files,
                 output_rows=inserted,
             )
         except _LoadError as e:
@@ -248,6 +268,7 @@ class LoadRunner:
         start: str,
         dest: tuple[str, str, str],
         input_bytes: int,
+        input_files: int,
         output_rows: int,
     ) -> JobRecord:
         end = now_epoch_ms_str()
@@ -269,7 +290,7 @@ class LoadRunner:
             errors=[],
             load_config=load_config,
             load_stats={
-                "inputFiles": "1",
+                "inputFiles": str(input_files),
                 "inputFileBytes": str(input_bytes),
                 "outputRows": str(output_rows),
                 "outputBytes": str(input_bytes),
