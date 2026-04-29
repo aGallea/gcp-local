@@ -88,8 +88,9 @@ class LoadRunner:
             max_bad_records = int(load_config.get("maxBadRecords") or 0)
             parse_errors: list[str] = []
             if source_format == "NEWLINE_DELIMITED_JSON":
-                rows = _parse_ndjson(data)
-                schema = await self._resolve_schema_ndjson(load_config, dest, rows)
+                raw_rows = _parse_ndjson(data)
+                schema = await self._resolve_schema_ndjson(load_config, dest, raw_rows)
+                rows, parse_errors = _ndjson_coerce_rows(raw_rows, schema)
             else:  # CSV
                 csv_rows, has_header = _parse_csv(data, load_config)
                 schema = await self._resolve_schema_csv(load_config, dest, csv_rows, has_header)
@@ -492,7 +493,7 @@ def _csv_to_dict_rows(
                 continue
             try:
                 payload[name] = _coerce_csv_cell(cell, by_name.get(name))
-            except _CsvCoerceError as e:
+            except _LoadCoerceError as e:
                 parse_errors.append(f"CSV row {row_idx} column {name!r}: {e}")
                 coerce_failed = True
                 break
@@ -502,12 +503,12 @@ def _csv_to_dict_rows(
     return out, parse_errors
 
 
-class _CsvCoerceError(ValueError):
-    """A CSV cell could not be coerced to the column's declared BigQuery type.
+class _LoadCoerceError(ValueError):
+    """A CSV/NDJSON cell could not be coerced to the column's declared type.
 
-    Raised by ``_coerce_csv_cell``; caught by ``_csv_to_dict_rows`` and
-    bucketed as a parse error so the row can fall under ``maxBadRecords``
-    instead of aborting the entire load.
+    Raised by ``_coerce_csv_cell`` / ``_coerce_ndjson_cell``; caught by the
+    respective row-walker and bucketed as a parse error so the row can fall
+    under ``maxBadRecords`` instead of aborting the entire load.
     """
 
 
@@ -545,7 +546,61 @@ def _coerce_csv_cell(cell: str, field: FieldSchema | None) -> Any:
             case _:
                 return cell
     except (ValueError, TypeError) as e:
-        raise _CsvCoerceError(f"cannot parse {cell!r} as {field.type}: {e}") from e
+        raise _LoadCoerceError(f"cannot parse {cell!r} as {field.type}: {e}") from e
+
+
+def _ndjson_coerce_rows(
+    rows: list[dict[str, Any]],
+    schema: list[FieldSchema],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Apply per-cell coercion to NDJSON rows; return (good_rows, parse_errors).
+
+    NDJSON arrives with native JSON types, but DATE/TIME/DATETIME/TIMESTAMP
+    have no JSON equivalent and arrive as strings. We parse them here into
+    typed Python objects so DuckDB never has to fall back to its implicit
+    string-cast (which bypasses ``maxBadRecords``). Non-string values for
+    those columns pass through unchanged so DuckDB-native shapes (e.g. an
+    integer Unix timestamp) still work.
+    """
+    by_name = {f.name: f for f in schema}
+    out: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    for row_idx, row in enumerate(rows):
+        coerced: dict[str, Any] = {}
+        coerce_failed = False
+        for key, value in row.items():
+            field = by_name.get(key)
+            try:
+                coerced[key] = _coerce_ndjson_cell(value, field)
+            except _LoadCoerceError as e:
+                parse_errors.append(f"NDJSON row {row_idx} field {key!r}: {e}")
+                coerce_failed = True
+                break
+        if coerce_failed:
+            continue
+        out.append(coerced)
+    return out, parse_errors
+
+
+def _coerce_ndjson_cell(value: Any, field: FieldSchema | None) -> Any:
+    if field is None or value is None:
+        return value
+    if not isinstance(value, str):
+        return value
+    try:
+        match field.type:
+            case "DATE":
+                return _dt.date.fromisoformat(value)
+            case "TIME":
+                return _dt.time.fromisoformat(value)
+            case "DATETIME":
+                return _parse_datetime_naive(value)
+            case "TIMESTAMP":
+                return _parse_timestamp_aware(value)
+            case _:
+                return value
+    except (ValueError, TypeError) as e:
+        raise _LoadCoerceError(f"cannot parse {value!r} as {field.type}: {e}") from e
 
 
 _BOOL_TRUE = {"true", "t", "1", "yes", "y"}

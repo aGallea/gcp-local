@@ -166,7 +166,9 @@ CSV cell coercion (`engine/loads.py::_coerce_csv_cell`) converts each cell to a 
 - `TIMESTAMP` → tz-aware `datetime.datetime` normalized to UTC. Accepted shapes: `YYYY-MM-DDTHH:MM:SSZ`, `... UTC`, `...+HH:MM`, or naive (assumed UTC).
 - `JSON` → re-serialized after `json.loads`, so malformed JSON fails fast here rather than when DuckDB evaluates the cell.
 
-Coercion errors raise `_CsvCoerceError`, which `_csv_to_dict_rows` catches and emits as a parse error — the row is dropped and bucketed under `maxBadRecords`. NDJSON DATE/TIMESTAMP/etc. still pass through as strings and rely on DuckDB's implicit cast (tracked as a follow-up).
+Coercion errors raise `_LoadCoerceError`, which `_csv_to_dict_rows` catches and emits as a parse error — the row is dropped and bucketed under `maxBadRecords`.
+
+NDJSON cell coercion (`engine/loads.py::_coerce_ndjson_cell`) is the parallel pass for NDJSON rows. Native JSON types (`int`, `float`, `bool`, `str`, `dict`, `list`, `None`) reach DuckDB as-is. The four temporal types — which JSON has no native representation for — accept the same string shapes as CSV and parse them into typed `datetime.date` / `datetime.time` / `datetime.datetime` objects via the same `_parse_datetime_naive` / `_parse_timestamp_aware` helpers. Non-string values for those columns pass through unchanged (so a Unix-timestamp number for a `TIMESTAMP` column still works). Malformed strings raise `_LoadCoerceError` and `_ndjson_coerce_rows` buckets the row under `maxBadRecords` exactly like the CSV path. JSON columns continue to be handled later in `coerce_value` (dict/list → JSON string).
 
 ## INFORMATION_SCHEMA
 
@@ -235,7 +237,6 @@ These are the gaps a consumer should know about. User-visible "what's not emulat
 - **Single DuckDB connection** — all execution is serialized through one connection plus a single-worker thread executor. Concurrent queries from multiple clients will block on each other; this is fine for emulator workloads but won't scale to real concurrency testing.
 - **`statistics.totalBytesProcessed = 0`** — DuckDB has no equivalent to BigQuery's bytes-scanned metric. Dashboards or assertions that gate on a non-zero value will need to tolerate `0`.
 - **No Parquet / Avro / ORC source formats** — load jobs only accept NDJSON and CSV (both inline and `gs://` URIs).
-- **NDJSON DATE / TIMESTAMP / DATETIME / TIME values** still pass through to DuckDB as strings (only the CSV path coerces these to typed Python objects). Malformed NDJSON temporal values surface as DuckDB cast errors and bypass `maxBadRecords`.
 - **Time-zone handling** — DuckDB's `TIMESTAMP WITH TIME ZONE` stores in UTC and returns UTC. There's no client-side timezone conversion.
 - **Job records are transient** — not persisted across container restarts, even with `PERSIST=1`. `jobs.list` only returns jobs from the current process lifetime.
 - **`cancel` is a no-op success** — queries run synchronously inside the request handler, so there's nothing to cancel by the time the cancel arrives.
