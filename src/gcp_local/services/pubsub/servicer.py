@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import bisect
 import contextlib
 import datetime as dt
 import itertools
@@ -510,6 +511,42 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
         except (PubSubError, InvalidName) as e:
             await _abort(context, e)
         return empty_pb2.Empty()
+
+    async def Seek(
+        self,
+        request: pubsub_pb2.SeekRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> pubsub_pb2.SeekResponse:
+        """Rewind/forward a subscription to a wall-clock time.
+
+        Snapshot-based Seek is intentionally not supported in v1 — snapshots
+        are not implemented at all.
+        """
+        if request.HasField("snapshot"):
+            await context.abort(
+                grpc.StatusCode.UNIMPLEMENTED,
+                "Snapshot-based Seek is not supported in v1.",
+            )
+            raise AssertionError("unreachable")
+        if not request.HasField("time"):
+            await _abort(
+                context,
+                InvalidArgument("Seek requires either time or snapshot"),
+            )
+        target_time = request.time.ToDatetime().replace(tzinfo=dt.UTC)
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            topic_proj, topic_id = await self._resolve_topic(project, sub_id)
+            async with lock:
+                messages = await self._storage.get_messages(topic_proj, topic_id)
+                # Binary search for first message with publish_time >= target.
+                times = [m.publish_time for m in messages]
+                idx = bisect.bisect_left(times, target_time)
+                await backlog.seek(message_index=idx)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return pubsub_pb2.SeekResponse()
 
     async def _resolve_topic(self, project: str, sub_id: str) -> tuple[str, str]:
         """Return the (topic_project, topic_id) pair for a subscription."""
