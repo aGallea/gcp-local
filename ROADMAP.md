@@ -43,7 +43,6 @@ These are known gaps in the already-implemented (Alpha) services, tracked here s
 
 - **`statistics.totalBytesProcessed`** — always reports `0`; DuckDB doesn't expose an equivalent metric.
 - **Parquet / Avro / ORC source formats** for load jobs.
-- **NDJSON DATE / TIMESTAMP / DATETIME / TIME values** — currently pass through as strings and rely on DuckDB's implicit cast (only the CSV path coerces these to typed Python objects).
 
 ### GCS
 

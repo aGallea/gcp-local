@@ -174,7 +174,8 @@ For each Stable/Alpha service, a short subsection listing known gaps with one-li
 - **BigQuery**
   - ~~GCS-URI load jobs (`load_table_from_uri('gs://...')`)~~ — *shipped (PR #8)*.
   - ~~`maxBadRecords` / `ignoreUnknownValues` on load jobs~~ — *shipped (PR #9)*: bad rows tolerated up to the threshold; counts reported in `statistics.load.badRecords`.
-  - ~~CSV DATE/TIMESTAMP/DATETIME/TIME/JSON coercion~~ — *shipped*: the CSV path now coerces to typed Python objects. NDJSON for these types still relies on DuckDB's implicit cast.
+  - ~~CSV DATE/TIMESTAMP/DATETIME/TIME/JSON coercion~~ — *shipped*: the CSV path now coerces to typed Python objects.
+  - ~~NDJSON DATE/TIMESTAMP/DATETIME/TIME coercion~~ — *shipped*: the NDJSON path now coerces string-typed temporals to typed Python objects, matching CSV.
   - `statistics.totalBytesProcessed` always reports 0 (DuckDB has no equivalent metric).
 - **GCS** — populate from gaps already documented in `docs/services/gcs.md`'s "What's not emulated" section.
 - **Secret Manager** — populate from the spec at `docs/superpowers/specs/2026-04-24-gcp-local-secret-manager-design.md` once the usage doc is written.

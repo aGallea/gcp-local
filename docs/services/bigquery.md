@@ -109,7 +109,19 @@ CSV cells are coerced to typed Python values before insert (so malformed inputs 
 
 Empty cells become `NULL` regardless of column type — so an empty cell on a `REQUIRED` column flows through as a `required field missing` bad-record rather than crashing with a coercion error.
 
-> NDJSON cells for `DATE` / `TIMESTAMP` / `DATETIME` / `TIME` are not yet coerced — they pass through to DuckDB as strings and rely on DuckDB's implicit cast. Tracked in [`ROADMAP.md`](../../ROADMAP.md).
+### NDJSON cell formats
+
+NDJSON arrives with native JSON types, so most columns need no coercion. The four temporal types — which JSON has no native representation for — are now coerced from the same string shapes accepted in CSV:
+
+| Column type | Accepted NDJSON value |
+|---|---|
+| `DATE` | String `YYYY-MM-DD`. |
+| `TIME` | String `HH:MM:SS[.ffffff]`. |
+| `DATETIME` | String `YYYY-MM-DD[ T]HH:MM:SS[.ffffff]` — no timezone (a `+HH:MM` or `Z` is rejected). |
+| `TIMESTAMP` | String `YYYY-MM-DDTHH:MM:SSZ`, `... UTC`, `...+HH:MM`, or naive (assumed UTC). |
+| `JSON` | Any JSON value (object, array, scalar). Object/array values are serialized into a JSON string before insert. |
+
+Malformed temporal strings raise BQ-shaped errors and bucket under `maxBadRecords` instead of falling through to DuckDB's implicit cast. Non-string values for temporal columns (e.g. an integer Unix-timestamp number for `TIMESTAMP`) pass through unchanged so DuckDB handles them.
 
 ### Write dispositions
 
