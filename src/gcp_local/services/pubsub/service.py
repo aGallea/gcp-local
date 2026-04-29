@@ -9,6 +9,7 @@ import grpc
 from gcp_local.core.context import Context
 from gcp_local.core.service import HealthStatus, Port
 from gcp_local.generated.google.pubsub.v1 import pubsub_pb2_grpc
+from gcp_local.services.pubsub.engine.delivery import RedeliverySweeper
 from gcp_local.services.pubsub.servicer import (
     PublisherServicer,
     SubscriberServicer,
@@ -34,6 +35,7 @@ class PubSubService:
         self._server: grpc.aio.Server | None = None
         self._started = False
         self._storage: PubSubStorage | None = None
+        self._sweeper: RedeliverySweeper | None = None
 
     async def start(self, ctx: Context) -> None:
         if ctx.persist:
@@ -46,11 +48,17 @@ class PubSubService:
         subscriber = SubscriberServicer(storage=self._storage, publisher=publisher)
         pubsub_pb2_grpc.add_PublisherServicer_to_server(publisher, self._server)  # type: ignore[no-untyped-call]
         pubsub_pb2_grpc.add_SubscriberServicer_to_server(subscriber, self._server)  # type: ignore[no-untyped-call]
+        self._sweeper = RedeliverySweeper(backlogs=subscriber._backlogs)
+        await self._sweeper.start()
         await self._server.start()
         self._started = True
         log.info("pubsub service listening on :%d", port)
 
     async def stop(self) -> None:
+        if self._sweeper is not None:
+            with contextlib.suppress(Exception):
+                await self._sweeper.stop()
+            self._sweeper = None
         if self._server is not None:
             with contextlib.suppress(Exception):
                 await self._server.stop(grace=None)
