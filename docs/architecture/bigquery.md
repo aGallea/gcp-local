@@ -224,9 +224,7 @@ These are the gaps a consumer should know about. User-visible "what's not emulat
 
 - **Single DuckDB connection** — all execution is serialized through one connection plus a single-worker thread executor. Concurrent queries from multiple clients will block on each other; this is fine for emulator workloads but won't scale to real concurrency testing.
 - **`statistics.totalBytesProcessed = 0`** — DuckDB has no equivalent to BigQuery's bytes-scanned metric. Dashboards or assertions that gate on a non-zero value will need to tolerate `0`.
-- **No GCS-URI load jobs** — `load_table_from_uri('gs://...')` is not implemented. This is the cross-service BQ↔GCS work tracked in [`ROADMAP.md`](../../ROADMAP.md).
-- **No Parquet / Avro / ORC source formats** — load jobs only accept inline NDJSON and CSV.
-- **`maxBadRecords` / `ignoreUnknownValues`** on load jobs are accepted but treated as all-or-nothing. One row-validation failure aborts the whole job.
+- **No Parquet / Avro / ORC source formats** — load jobs only accept NDJSON and CSV (both inline and `gs://` URIs).
 - **CSV cell coercion for DATE / TIMESTAMP / JSON columns** is pass-through; the values are sent to DuckDB as strings and rely on DuckDB's implicit cast.
 - **Time-zone handling** — DuckDB's `TIMESTAMP WITH TIME ZONE` stores in UTC and returns UTC. There's no client-side timezone conversion.
 - **Job records are transient** — not persisted across container restarts, even with `PERSIST=1`. `jobs.list` only returns jobs from the current process lifetime.

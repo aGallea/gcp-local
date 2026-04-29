@@ -203,7 +203,7 @@ After schema resolution, parse, and disposition setup, the load runs the same ba
 INSERT INTO "<project>:<dataset>"."<table>" VALUES (?,?,...),(?,?,...),...;
 ```
 
-Parameters are produced by `engine/coerce.py::row_to_values(payload, schema)` — the same helper insertAll uses. Per-row validation errors (`required field missing`, `unknown field`) are aggregated; the first 5 surface in `errors[]`, the count goes into `errorResult.message`. Aggregated row failures abort the whole load (no per-row partial success) and the job ends with `errorResult.reason = "invalid"`. This differs from `insertAll`'s `insertErrors[]` shape but matches real BigQuery load-job behavior — load jobs are all-or-nothing.
+Parameters are produced by `engine/coerce.py::row_to_values(payload, schema)` — the same helper insertAll uses. Per-row validation errors (`required field missing`, `unknown field`, CSV column-count mismatch) are aggregated and bucketed under `configuration.load.maxBadRecords` (default `0`); rows beyond that count abort the load with `errorResult.reason = "invalid"`, while accepted bad rows surface in `statistics.load.badRecords`. This differs from `insertAll`'s `insertErrors[]` shape (per-row return) but matches real BigQuery load-job behavior. *Note: §11 of this doc originally said load jobs were all-or-nothing; that was the v1 simplification, now superseded by `maxBadRecords` support — see §17.*
 
 DuckDB execution errors during the INSERT itself surface as `errorResult.reason = "invalidQuery"` (binder/type errors) or `"invalid"` (constraint violations) following the parent spec's error mapping (§6.5).
 
