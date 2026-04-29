@@ -6,7 +6,12 @@ from typing import Any
 from fastapi import APIRouter, Body, Path
 
 from gcp_local.services.bigquery.engine.jobs import JobRunner
-from gcp_local.services.bigquery.errors import JobNotFound, bigquery_error_response
+from gcp_local.services.bigquery.engine.loads import LoadRunner
+from gcp_local.services.bigquery.errors import (
+    JobNotFound,
+    bigquery_error_response,
+    make_error_response,
+)
 from gcp_local.services.bigquery.models import FieldSchema, JobRecord
 from gcp_local.services.bigquery.names import (
     InvalidName,
@@ -70,7 +75,7 @@ def _schema_to_api(schema: list[FieldSchema]) -> dict[str, Any]:
     return {"fields": [{"name": f.name, "type": f.type, "mode": f.mode} for f in schema]}
 
 
-def build_router(runner: JobRunner) -> APIRouter:
+def build_router(runner: JobRunner, load_runner: LoadRunner | None = None) -> APIRouter:
     router = APIRouter(prefix="/bigquery/v2/projects")
 
     @router.post("/{project}/jobs")
@@ -80,7 +85,26 @@ def build_router(runner: JobRunner) -> APIRouter:
             ref = body.get("jobReference") or {}
             job_id = ref.get("jobId") or f"job_{uuid.uuid4().hex}"
             validate_job_id(job_id)
-            qcfg = (body.get("configuration") or {}).get("query") or {}
+            configuration = body.get("configuration") or {}
+            load_cfg = configuration.get("load")
+            if load_cfg is not None:
+                # Lazy import: avoids a top-level cycle with routes/uploads.py
+                # (uploads imports job_to_api from this module).
+                from gcp_local.services.bigquery.routes.uploads import run_load_job
+
+                if load_runner is None:
+                    return make_error_response(
+                        500, "load runner not configured", reason="internalError"
+                    )
+                return await run_load_job(
+                    project=project,
+                    job_id=job_id,
+                    load_config=load_cfg,
+                    data=b"",
+                    load_runner=load_runner,
+                    runner=runner,
+                )
+            qcfg = configuration.get("query") or {}
             sql = qcfg.get("query") or ""
             rec = await runner.run_query(project=project, job_id=job_id, sql=sql)
             return job_to_api(rec)

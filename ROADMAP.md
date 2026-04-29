@@ -41,7 +41,6 @@ These are known gaps in the already-implemented (Alpha) services, tracked here s
 
 ### BigQuery
 
-- **GCS-URI load jobs** (`load_table_from_uri('gs://...')`) — deferred from PR #5; needs the cross-service BQ↔GCS wiring sketched in `docs/superpowers/specs/2026-04-26-gcp-local-bigquery-load-jobs-design.md` §11.
 - **`maxBadRecords` / `ignoreUnknownValues`** on load jobs — currently accepted but treated as all-or-nothing; correct semantics need partial-row tolerance.
 - **CSV cell coercion for DATE / TIMESTAMP / JSON columns** — currently pass-through; relies on DuckDB implicit cast.
 - **`statistics.totalBytesProcessed`** — always reports `0`; DuckDB doesn't expose an equivalent metric.

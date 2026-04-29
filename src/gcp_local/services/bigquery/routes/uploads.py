@@ -170,6 +170,31 @@ async def _run_load_and_persist(
     job_ref = metadata.get("jobReference") or {}
     job_id = job_ref.get("jobId") or _gen_job_id()
     load_config = ((metadata.get("configuration") or {}).get("load")) or {}
+    return await run_load_job(
+        project=project,
+        job_id=job_id,
+        load_config=load_config,
+        data=data,
+        load_runner=load_runner,
+        runner=runner,
+    )
+
+
+async def run_load_job(
+    *,
+    project: str,
+    job_id: str,
+    load_config: dict[str, Any],
+    data: bytes,
+    load_runner: LoadRunner,
+    runner: JobRunner,
+) -> dict[str, Any]:
+    """Execute a load job and persist the resulting JobRecord.
+
+    Shared between the upload endpoints (multipart / resumable, which carry
+    inline bytes) and the regular `POST /jobs` endpoint (which carries
+    `sourceUris` referencing GCS objects).
+    """
     rec = await load_runner.run_load(
         project=project,
         job_id=job_id,

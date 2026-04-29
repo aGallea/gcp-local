@@ -27,7 +27,7 @@ Motivation: the maestro-evals project currently patches `BigQueryRunner.run_load
 
 ### Out of scope (unchanged from parent BQ spec §2 unless overridden)
 
-- **GCS-URI loads** (`configuration.load.sourceUris: ["gs://..."]`) — still deferred. Cross-service work scheduled for a later increment.
+- **GCS-URI loads** (`configuration.load.sourceUris: ["gs://..."]`) — *deferred at the time this spec was written; subsequently shipped*. NDJSON and CSV `gs://` loads (including globs and multi-URI lists) are now handled via `engine/gcs_uri.py::GcsUriFetcher`, which fetches over HTTP from a configurable endpoint (defaults to the loopback in-process GCS service). See `docs/architecture/bigquery.md` "Load jobs" for the current flow. Binary formats (Parquet/Avro/ORC) and Datastore backups remain out of scope.
 - **Source formats:** `PARQUET`, `AVRO`, `ORC`, `DATASTORE_BACKUP`. Reject with `errorResult.reason = "invalid"`.
 - **`uploadType=media`** (raw single-shot). Rejected with 400; the official client never uses this for jobs.
 - Copy jobs, extract jobs, ML model imports.
