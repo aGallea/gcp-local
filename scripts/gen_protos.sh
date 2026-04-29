@@ -40,3 +40,32 @@ PY
 
 echo 'generated:'
 ls -1 "src/gcp_local/generated/google/cloud/secretmanager/v1/"
+
+# Pub/Sub (pubsub.proto + transitive schema.proto)
+python -m grpc_tools.protoc \
+  --proto_path=protos \
+  --proto_path="$EXTRA_PROTO_PATH" \
+  --python_out="$OUT" \
+  --pyi_out="$OUT" \
+  --grpc_python_out="$OUT" \
+  protos/google/pubsub/v1/pubsub.proto \
+  protos/google/pubsub/v1/schema.proto
+
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/pubsub/v1')
+for p in out.glob('*.py'):
+    text = p.read_text()
+    new = re.sub(
+        r'^from google\.pubsub\.v1 import',
+        'from gcp_local.generated.google.pubsub.v1 import',
+        text,
+        flags=re.MULTILINE,
+    )
+    if new != text:
+        p.write_text(new)
+        print(f'rewrote imports in {p}')
+PY
+
+echo 'generated pubsub:'
+ls -1 "src/gcp_local/generated/google/pubsub/v1/"
