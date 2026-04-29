@@ -10,7 +10,10 @@ from typing import Any, NoReturn, Protocol
 import grpc
 
 from gcp_local.generated.google.pubsub.v1 import pubsub_pb2, pubsub_pb2_grpc
-from gcp_local.services.pubsub.engine.backlog import SubscriptionBacklog
+from gcp_local.services.pubsub.engine.backlog import (
+    DeliveredMessage,
+    SubscriptionBacklog,
+)
 from gcp_local.services.pubsub.errors import (
     InvalidArgument,
     PubSubError,
@@ -24,6 +27,8 @@ from gcp_local.services.pubsub.names import (
     validate_resource_id,
 )
 from gcp_local.services.pubsub.storage import PubSubStorage
+
+_LONG_POLL_TIMEOUT_SECONDS = 90.0
 
 
 class _StateHubLike(Protocol):
@@ -428,3 +433,70 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
             subscriptions=[_sub_record_to_proto(r) for r in slice_],
             next_page_token=next_token,
         )
+
+    async def Pull(
+        self,
+        request: pubsub_pb2.PullRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> pubsub_pb2.PullResponse:
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            max_messages = request.max_messages or 1
+            topic_proj, topic_id = await self._resolve_topic(project, sub_id)
+            # Try once; if empty and !return_immediately, long-poll on the
+            # deliverable Event.
+            async with lock:
+                messages = await self._storage.get_messages(topic_proj, topic_id)
+                delivered = await backlog.pull(
+                    messages=messages,
+                    max_count=max_messages,
+                    now=dt.datetime.now(dt.UTC),
+                )
+            if delivered or request.return_immediately:
+                return self._pull_response(delivered)
+            # Long-poll: wait up to 90s for a new publish or NACK.
+            try:
+                backlog.deliverable.clear()
+                await asyncio.wait_for(
+                    backlog.deliverable.wait(),
+                    timeout=_LONG_POLL_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                return self._pull_response([])
+            async with lock:
+                messages = await self._storage.get_messages(topic_proj, topic_id)
+                delivered = await backlog.pull(
+                    messages=messages,
+                    max_count=max_messages,
+                    now=dt.datetime.now(dt.UTC),
+                )
+            return self._pull_response(delivered)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+
+    async def _resolve_topic(self, project: str, sub_id: str) -> tuple[str, str]:
+        """Return the (topic_project, topic_id) pair for a subscription."""
+        sub = await self._storage.get_subscription(project, sub_id)
+        return sub.topic_project, sub.topic_id
+
+    def _pull_response(self, delivered: list[DeliveredMessage]) -> pubsub_pb2.PullResponse:
+        from google.protobuf.timestamp_pb2 import Timestamp
+
+        received: list[pubsub_pb2.ReceivedMessage] = []
+        for d in delivered:
+            ts = Timestamp()
+            ts.FromDatetime(d.message.publish_time)
+            received.append(
+                pubsub_pb2.ReceivedMessage(
+                    ack_id=d.ack_id,
+                    message=pubsub_pb2.PubsubMessage(
+                        data=d.message.data,
+                        attributes=d.message.attributes,
+                        message_id=d.message.message_id,
+                        publish_time=ts,
+                        ordering_key=d.message.ordering_key or "",
+                    ),
+                )
+            )
+        return pubsub_pb2.PullResponse(received_messages=received)
