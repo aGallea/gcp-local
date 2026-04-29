@@ -10,6 +10,7 @@ from typing import Any, NoReturn, Protocol
 import grpc
 
 from gcp_local.generated.google.pubsub.v1 import pubsub_pb2, pubsub_pb2_grpc
+from gcp_local.services.pubsub.engine.backlog import SubscriptionBacklog
 from gcp_local.services.pubsub.errors import (
     InvalidArgument,
     PubSubError,
@@ -301,6 +302,32 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     ) -> None:
         self._storage = storage
         self._publisher = publisher  # used to register deliverable events
+        self._backlogs: dict[tuple[str, str], SubscriptionBacklog] = {}
+        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    async def _get_backlog(
+        self, project: str, sub_id: str
+    ) -> tuple[SubscriptionBacklog, asyncio.Lock]:
+        """Lazily create a backlog + lock the first time a subscription is touched."""
+        key = (project, sub_id)
+        if key not in self._backlogs:
+            sub = await self._storage.get_subscription(project, sub_id)
+            backlog = SubscriptionBacklog(
+                ack_deadline_seconds=sub.ack_deadline_seconds,
+                enable_ordering=sub.enable_message_ordering,
+            )
+            self._backlogs[key] = backlog
+            self._locks[key] = asyncio.Lock()
+            # Register the deliverable Event with the publisher so Publish wakes us up.
+            self._publisher.deliverable_events[key] = backlog.deliverable
+        return self._backlogs[key], self._locks[key]
+
+    async def _drop_backlog(self, project: str, sub_id: str) -> None:
+        """Called from DeleteSubscription so the backlog is cleaned up."""
+        key = (project, sub_id)
+        self._backlogs.pop(key, None)
+        self._locks.pop(key, None)
+        self._publisher.deliverable_events.pop(key, None)
 
     async def CreateSubscription(
         self,
@@ -373,6 +400,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
         try:
             project, sub_id = _parse_subscription(request.subscription)
             await self._storage.delete_subscription(project, sub_id)
+            await self._drop_backlog(project, sub_id)
         except (PubSubError, InvalidName) as e:
             await _abort(context, e)
         return empty_pb2.Empty()
