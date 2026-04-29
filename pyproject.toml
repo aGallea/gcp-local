@@ -26,13 +26,15 @@ dependencies = [
     "duckdb>=0.10",
     "sqlglot>=23.0",
     "numpy>=1.26",
+    # Used by the BigQuery service to fetch gs:// URIs from the GCS service
+    # (in-process or external) when running load-from-uri jobs.
+    "httpx>=0.26",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "httpx>=0.26",
     "ruff>=0.3",
     "mypy>=1.9",
     "google-cloud-storage>=2.14",
