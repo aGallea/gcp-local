@@ -152,8 +152,8 @@ The first two paths share `routes/uploads.py::run_load_job`, which is also calle
    - else fail with `reason: invalid`
 5. Enforce `createDisposition`: `CREATE_IF_NEEDED` materializes the table from the resolved schema; `CREATE_NEVER` fails with `reason: notFound`.
 6. Apply `writeDisposition`: `WRITE_APPEND` is a no-op pre-step; `WRITE_TRUNCATE` runs `DELETE FROM` first; `WRITE_EMPTY` checks `SELECT 1 ... LIMIT 1` and fails with `reason: duplicate` on a non-empty target. `WRITE_TRUNCATE` is wrapped in an explicit `BEGIN ... COMMIT` (with `ROLLBACK` on failure) so a row-validation failure after the DELETE leaves the original rows intact — this matches spec §8.2's transactional guarantee.
-7. Validate every row up front (load jobs are all-or-nothing, unlike `insertAll`'s `insertErrors[]` per-row reporting).
-8. Run the same batched `INSERT INTO ... VALUES (...),(...),...` shape as `insertAll`.
+7. Validate each row and bucket failures (REQUIRED-field violations, unknown-field rejections, CSV column-count mismatches) under `configuration.load.maxBadRecords` (default `0`). When `ignoreUnknownValues` is true, schema-unknown keys are stripped from each NDJSON row before validation and trailing extra columns are dropped from wide CSV rows. The job fails with `reason: invalid` only when the bad-record count exceeds `maxBadRecords`; otherwise the surviving rows insert and the count surfaces in `statistics.load.badRecords`. NDJSON syntax errors (lines that aren't valid JSON objects) remain fatal and bypass `maxBadRecords` because they can't be associated with a row.
+8. Run the same batched `INSERT INTO ... VALUES (...),(...),...` shape as `insertAll` against the surviving rows.
 9. Return a `JobRecord(job_type="LOAD", load_config=..., load_stats={inputFiles, inputFileBytes, outputRows, outputBytes, badRecords})`. The runner registers the record on the shared `JobRunner` via `register_external` so it's visible to subsequent `jobs.get` / `jobs.list` calls.
 
 CSV cell coercion (`engine/loads.py::_coerce_csv_cell`) converts strings to int / float / bool per the resolved schema; DATE / TIMESTAMP / JSON columns pass through as strings and rely on DuckDB's implicit cast.
@@ -224,9 +224,7 @@ These are the gaps a consumer should know about. User-visible "what's not emulat
 
 - **Single DuckDB connection** — all execution is serialized through one connection plus a single-worker thread executor. Concurrent queries from multiple clients will block on each other; this is fine for emulator workloads but won't scale to real concurrency testing.
 - **`statistics.totalBytesProcessed = 0`** — DuckDB has no equivalent to BigQuery's bytes-scanned metric. Dashboards or assertions that gate on a non-zero value will need to tolerate `0`.
-- **No GCS-URI load jobs** — `load_table_from_uri('gs://...')` is not implemented. This is the cross-service BQ↔GCS work tracked in [`ROADMAP.md`](../../ROADMAP.md).
-- **No Parquet / Avro / ORC source formats** — load jobs only accept inline NDJSON and CSV.
-- **`maxBadRecords` / `ignoreUnknownValues`** on load jobs are accepted but treated as all-or-nothing. One row-validation failure aborts the whole job.
+- **No Parquet / Avro / ORC source formats** — load jobs only accept NDJSON and CSV (both inline and `gs://` URIs).
 - **CSV cell coercion for DATE / TIMESTAMP / JSON columns** is pass-through; the values are sent to DuckDB as strings and rely on DuckDB's implicit cast.
 - **Time-zone handling** — DuckDB's `TIMESTAMP WITH TIME ZONE` stores in UTC and returns UTC. There's no client-side timezone conversion.
 - **Job records are transient** — not persisted across container restarts, even with `PERSIST=1`. `jobs.list` only returns jobs from the current process lifetime.

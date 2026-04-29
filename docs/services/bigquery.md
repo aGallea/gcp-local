@@ -99,6 +99,37 @@ For NDJSON, the emulator walks the first 100 rows and widens types per top-level
 | `WRITE_TRUNCATE` | Existing rows are deleted before the load (transactional — a failed insert leaves the original rows intact). |
 | `WRITE_EMPTY` | Load fails with `reason: duplicate` if the table already contains rows. |
 
+### Bad-record tolerance
+
+Both `maxBadRecords` and `ignoreUnknownValues` are honored on load jobs:
+
+| Field | Effect |
+|---|---|
+| `max_bad_records` (default `0`) | Up to N bad rows are skipped instead of aborting the job. Beyond N, the job fails with `reason: invalid`. The accepted count surfaces in `statistics.load.badRecords`. |
+| `ignore_unknown_values` (default `False`) | NDJSON: schema-unknown keys are stripped from each row before validation. CSV: trailing extra columns on wide rows are silently dropped. |
+
+A "bad row" is any of: REQUIRED field missing, unknown field (when `ignoreUnknownValues` is off), or a CSV row whose column count doesn't match the header. NDJSON lines that aren't valid JSON objects remain fatal and don't count toward `maxBadRecords` (they can't be mapped to a row).
+
+```python
+job_config = LoadJobConfig(
+    schema=[SchemaField("id", "INT64", mode="REQUIRED"), SchemaField("name", "STRING")],
+    source_format="NEWLINE_DELIMITED_JSON",
+    max_bad_records=10,
+    ignore_unknown_values=True,
+)
+job = client.load_table_from_json(
+    [
+        {"id": 1, "name": "alice", "extra": "ignored"},  # extra key stripped
+        {"name": "no_id"},                                # bad: REQUIRED id missing
+        {"id": 2, "name": "bob"},
+    ],
+    table_ref,
+    job_config=job_config,
+)
+job.result()
+print(job.output_rows, job.bad_records)  # 2, 1
+```
+
 ### Create dispositions
 
 | `create_disposition` | Behavior |

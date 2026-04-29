@@ -83,27 +83,44 @@ class LoadRunner:
                     data, input_files = await self._gcs_fetcher.fetch_concat(source_uris)
                 except GcsUriError as e:
                     raise _LoadError("invalid", str(e)) from e
+            ignore_unknown = bool(load_config.get("ignoreUnknownValues") or False)
+            max_bad_records = int(load_config.get("maxBadRecords") or 0)
+            parse_errors: list[str] = []
             if source_format == "NEWLINE_DELIMITED_JSON":
                 rows = _parse_ndjson(data)
                 schema = await self._resolve_schema_ndjson(load_config, dest, rows)
             else:  # CSV
                 csv_rows, has_header = _parse_csv(data, load_config)
                 schema = await self._resolve_schema_csv(load_config, dest, csv_rows, has_header)
-                rows = _csv_to_dict_rows(csv_rows, has_header, schema)
+                rows, parse_errors = _csv_to_dict_rows(csv_rows, has_header, schema, ignore_unknown)
             await self._ensure_table(dest, schema, load_config)
             disp = (load_config.get("writeDisposition") or "WRITE_APPEND").upper()
             if disp == "WRITE_TRUNCATE":
                 await self._conn.execute("BEGIN")
                 try:
                     await self._apply_write_disposition(dest, load_config)
-                    inserted = await self._insert_rows(dest, schema, rows)
+                    inserted, bad = await self._insert_rows(
+                        dest,
+                        schema,
+                        rows,
+                        ignore_unknown_values=ignore_unknown,
+                        max_bad_records=max_bad_records,
+                        parse_errors=parse_errors,
+                    )
                 except Exception:
                     await self._conn.execute("ROLLBACK")
                     raise
                 await self._conn.execute("COMMIT")
             else:
                 await self._apply_write_disposition(dest, load_config)
-                inserted = await self._insert_rows(dest, schema, rows)
+                inserted, bad = await self._insert_rows(
+                    dest,
+                    schema,
+                    rows,
+                    ignore_unknown_values=ignore_unknown,
+                    max_bad_records=max_bad_records,
+                    parse_errors=parse_errors,
+                )
             return self._success(
                 project=project,
                 job_id=job_id,
@@ -113,6 +130,7 @@ class LoadRunner:
                 input_bytes=len(data),
                 input_files=input_files,
                 output_rows=inserted,
+                bad_records=bad,
             )
         except _LoadError as e:
             return self._fail(project, job_id, load_config, start, e.reason, str(e))
@@ -235,26 +253,48 @@ class LoadRunner:
         dest: tuple[str, str, str],
         schema: list[FieldSchema],
         rows: list[dict[str, Any]],
-    ) -> int:
-        if not rows:
-            return 0
-        # Validate every row up front; load jobs are all-or-nothing.
-        all_errors: list[str] = []
+        *,
+        ignore_unknown_values: bool,
+        max_bad_records: int,
+        parse_errors: list[str],
+    ) -> tuple[int, int]:
+        """Validate, filter, and insert rows; return (inserted, bad_record_count).
+
+        Bad rows (parse failures + validation failures) are tolerated up to
+        ``max_bad_records``; anything beyond that fails the job. When
+        ``ignore_unknown_values`` is True, schema-unknown keys are stripped
+        from each payload before validation and never sent to DuckDB.
+        """
+        schema_names = {f.name for f in schema}
+        good_rows: list[dict[str, Any]] = []
+        bad_errors: list[str] = list(parse_errors)
         for i, row in enumerate(rows):
-            errs = validate_row(row, schema)
-            for e in errs:
-                all_errors.append(f"row {i}: {e}")
-        if all_errors:
-            head = all_errors[:5]
+            payload = (
+                {k: v for k, v in row.items() if k in schema_names}
+                if ignore_unknown_values
+                else row
+            )
+            errs = validate_row(payload, schema, ignore_unknown_values=ignore_unknown_values)
+            if errs:
+                bad_errors.extend(f"row {i}: {e}" for e in errs)
+                continue
+            good_rows.append(payload)
+        if len(bad_errors) > max_bad_records:
+            head = bad_errors[:5]
             raise _LoadError(
                 "invalid",
-                f"{len(all_errors)} row validation error(s); first: " + "; ".join(head),
+                (
+                    f"Too many errors encountered. Limit: {max_bad_records}; "
+                    f"got {len(bad_errors)}. First: " + "; ".join(head)
+                ),
             )
+        if not good_rows:
+            return 0, len(bad_errors)
         qualname = duckdb_table_qualname(*dest)
-        placeholders = ",".join("(" + ",".join(["?"] * len(schema)) + ")" for _ in rows)
-        params: list[Any] = [v for row in rows for v in row_to_values(row, schema)]
+        placeholders = ",".join("(" + ",".join(["?"] * len(schema)) + ")" for _ in good_rows)
+        params: list[Any] = [v for row in good_rows for v in row_to_values(row, schema)]
         await self._conn.execute(f"INSERT INTO {qualname} VALUES {placeholders}", params)
-        return len(rows)
+        return len(good_rows), len(bad_errors)
 
     # ------------------------------------------------------------------
     # Job record builders
@@ -270,6 +310,7 @@ class LoadRunner:
         input_bytes: int,
         input_files: int,
         output_rows: int,
+        bad_records: int,
     ) -> JobRecord:
         end = now_epoch_ms_str()
         return JobRecord(
@@ -294,7 +335,7 @@ class LoadRunner:
                 "inputFileBytes": str(input_bytes),
                 "outputRows": str(output_rows),
                 "outputBytes": str(input_bytes),
-                "badRecords": "0",
+                "badRecords": str(bad_records),
             },
         )
 
@@ -412,7 +453,16 @@ def _csv_to_dict_rows(
     csv_rows: list[list[str]],
     has_header: bool,
     schema: list[FieldSchema],
-) -> list[dict[str, Any]]:
+    ignore_unknown_values: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Build payload dicts from parsed CSV rows.
+
+    Returns the surviving rows and a list of parse-error messages (one per
+    row that couldn't be mapped). Column-count mismatches are reported as
+    parse errors and skipped instead of raising — the caller buckets them
+    under ``maxBadRecords``. When ``ignore_unknown_values`` is True, rows
+    with too many columns are still accepted (extras are dropped).
+    """
     if has_header:
         header = csv_rows[0]
         data = csv_rows[1:]
@@ -422,27 +472,36 @@ def _csv_to_dict_rows(
 
     by_name = {f.name: f for f in schema}
     out: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
     for row_idx, row in enumerate(data):
-        if len(row) != len(header):
-            raise _LoadError(
-                "invalid",
-                f"CSV row {row_idx} has {len(row)} columns, expected {len(header)}",
-            )
+        if len(row) > len(header) and not ignore_unknown_values:
+            parse_errors.append(f"CSV row {row_idx} has {len(row)} columns, expected {len(header)}")
+            continue
+        if len(row) < len(header):
+            parse_errors.append(f"CSV row {row_idx} has {len(row)} columns, expected {len(header)}")
+            continue
         payload: dict[str, Any] = {}
-        for col_idx, cell in enumerate(row):
+        # Truncate to header length so over-wide rows under ignore_unknown_values
+        # silently drop the trailing columns.
+        for col_idx, cell in enumerate(row[: len(header)]):
             name = header[col_idx]
             if cell is _NULL_SENTINEL:
                 payload[name] = None
             else:
                 payload[name] = _coerce_csv_cell(cell, by_name.get(name))
         out.append(payload)
-    return out
+    return out, parse_errors
 
 
 def _coerce_csv_cell(cell: str, field: FieldSchema | None) -> Any:
     if field is None:
         return cell
-    if cell == "" and field.mode != "REQUIRED":
+    # Empty strings always become None. For NULLABLE fields this is the
+    # intended representation; for REQUIRED fields it lets validate_row
+    # raise the "required field missing" error, which is bucketed under
+    # maxBadRecords. Without this, primitive coercions (e.g. int(""))
+    # would raise mid-row and abort the whole load.
+    if cell == "":
         return None
     match field.type:
         case "INT64" | "INTEGER":

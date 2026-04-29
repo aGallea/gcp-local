@@ -495,3 +495,39 @@ async def test_load_table_from_uri_missing_object(emulator: dict[str, int]) -> N
             )
         )
         await _run(lambda: job.result())
+
+
+@pytest.mark.asyncio
+async def test_load_max_bad_records_and_ignore_unknown_values(emulator: dict[str, int]) -> None:
+    """End-to-end: real BQ client wires LoadJobConfig flags through to the runner."""
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_bad")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "rows")
+    schema = [
+        SchemaField("id", "INT64", mode="REQUIRED"),
+        SchemaField("name", "STRING"),
+    ]
+    job_config = bigquery.LoadJobConfig(
+        schema=schema,
+        source_format="NEWLINE_DELIMITED_JSON",
+        max_bad_records=2,
+        ignore_unknown_values=True,
+    )
+    rows = [
+        {"id": 1, "name": "alice", "extra": "drop_me"},  # extra key stripped
+        {"name": "missing_id"},  # bad-record (REQUIRED id missing)
+        {"id": 2, "name": "bob"},
+    ]
+    job = await _run(lambda: client.load_table_from_json(rows, table_ref, job_config=job_config))
+    result = await _run(lambda: job.result())
+    # bad_records is exposed by the official client via output_bytes/job stats
+    assert result.output_rows == 2
+    out = await _run(
+        lambda: list(
+            client.query(
+                "SELECT id, name FROM `test-project.ds_load_bad.rows` ORDER BY id"
+            ).result()
+        )
+    )
+    assert [(r["id"], r["name"]) for r in out] == [(1, "alice"), (2, "bob")]
