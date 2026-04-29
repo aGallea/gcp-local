@@ -642,8 +642,11 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
 
         consumer = asyncio.create_task(_consume_client_requests())
 
+        # grpc.aio.ServicerContext has no is_active(); cancellation propagates
+        # as CancelledError into this generator via the task running it. The
+        # outer `finally` block tears down the consumer task either way.
         try:
-            while context.is_active():
+            while True:
                 async with lock:
                     messages = await self._storage.get_messages(topic_proj, topic_id)
                     # Compute per-round message budget. ``0`` means unlimited;

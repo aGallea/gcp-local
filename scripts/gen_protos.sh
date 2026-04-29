@@ -103,5 +103,39 @@ for p in out.glob('*.py'):
         print(f'rewrote imports in {p}')
 PY
 
+# Same descriptor-pool collision fallback as the secret_manager block above:
+# google-cloud-pubsub is a dev dep used by integration tests, and proto-plus
+# eagerly registers google.pubsub.v1.{Topic,SchemaView,...}. Wrap our pb2 files
+# so the second AddSerializedFile call (whichever side wins the import race)
+# falls back to FindFileContainingSymbol instead of aborting pytest collection.
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/pubsub/v1')
+fallback_symbols = {
+    'pubsub_pb2.py': 'google.pubsub.v1.Topic',
+    'schema_pb2.py': 'google.pubsub.v1.Schema',
+}
+pattern = re.compile(
+    r'^DESCRIPTOR = (_descriptor_pool\.Default\(\)\.AddSerializedFile\(.+?\))\n',
+    re.MULTILINE | re.DOTALL,
+)
+for fname, symbol in fallback_symbols.items():
+    p = out / fname
+    text = p.read_text()
+    m = pattern.search(text)
+    if not m:
+        continue  # already wrapped, or shape changed
+    wrapper = (
+        f"try:\n"
+        f"  DESCRIPTOR = {m.group(1)}\n"
+        f"except TypeError:\n"
+        f"  DESCRIPTOR = _descriptor_pool.Default().FindFileContainingSymbol(\n"
+        f"    '{symbol}'\n"
+        f"  )\n"
+    )
+    p.write_text(text[:m.start()] + wrapper + text[m.end():])
+    print(f'wrapped DESCRIPTOR in {p}')
+PY
+
 echo 'generated pubsub:'
 ls -1 "src/gcp_local/generated/google/pubsub/v1/"
