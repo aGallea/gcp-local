@@ -10,9 +10,11 @@ Add new entries under `[Unreleased]` as part of every PR that changes user-visib
 
 - **GCS:** populate `kind`, `id`, `selfLink`, `mediaLink`, and `storageClass` on every object/bucket JSON response. `gcloud storage cat`/`cp` previously crashed with a `TypeError: endswith first arg must be bytes` because its apitools download path threads `metadata.mediaLink` through `urllib.parse.urlsplit`, which coerces `None` into bytes when the field is absent.
 - **GCS:** accept apitools' single-quoted multipart `boundary` parameter (`boundary='===abc==='`). Python's `email` parser only honors unquoted or double-quoted boundaries per RFC 2045/2046; we now normalize before parsing. `gcloud storage cp` previously failed with "multipart parse error: list index out of range".
+- **BigQuery:** TIMESTAMP query results now serialize as integer microseconds since epoch (was float-seconds). Matches what `google-cloud-bigquery`'s `CellDataParser` expects (it parses with `int(value)`); the previous `1705322096.000000` form raised `ValueError` in the client.
 
 ### Added
 
+- **BigQuery:** CSV load jobs now coerce `DATE`, `TIME`, `DATETIME`, `TIMESTAMP`, and `JSON` cells to typed Python objects before insert. Malformed values raise BQ-shaped errors and bucket under `maxBadRecords` instead of propagating DuckDB cast failures. Boolean coercion also broadens to accept `t`/`T`/`1`/`yes`/`y` (and the falsey equivalents) per real BQ semantics. NDJSON DATE/TIMESTAMP/etc. still pass through as strings — tracked as a follow-up in `ROADMAP.md`.
 - **BigQuery:** `maxBadRecords` and `ignoreUnknownValues` are now honored on load jobs. Previously they were accepted but the load aborted on the first bad row. Now bad rows (REQUIRED-field violations, unknown fields when the flag is off, CSV column-count mismatches) are tolerated up to `maxBadRecords` (default `0`); the count surfaces in `statistics.load.badRecords`. `ignoreUnknownValues` strips schema-unknown keys from NDJSON rows and drops trailing extra columns from wide CSV rows.
 - **BigQuery:** GCS-URI load jobs — `client.load_table_from_uri("gs://bucket/path", ...)` now works for NDJSON and CSV, including glob patterns (`gs://b/dir/*.ndjson`, `gs://b/data/**`) and multi-URI lists. The BigQuery service resolves `gs://` URIs over HTTP against a configurable endpoint: `BIGQUERY_GCS_URI_ENDPOINT` → `STORAGE_EMULATOR_HOST` → loopback to the in-process gcp-local GCS service.
 - **GCS:** `GET /storage/v1/b/<bucket>/storageLayout` endpoint returning `kind=storage#storageLayout` so gcloud's preflight call no longer 404s.
@@ -34,7 +36,6 @@ The initial alpha covers three of the planned v1 services (BigQuery, GCS, Secret
 
 - BigQuery load jobs do not yet support binary source formats (Parquet / Avro / ORC). NDJSON and CSV are supported for both inline payloads and `gs://` source URIs.
 - BigQuery `statistics.totalBytesProcessed` always reports `0` — DuckDB does not expose an equivalent metric.
-- BigQuery DATE / TIMESTAMP / JSON column coercion in CSV load jobs is pass-through; the emulator relies on DuckDB's implicit cast.
 - Authentication is not enforced on any service; clients must use `AnonymousCredentials`.
 
 [Unreleased]: https://github.com/aGallea/gcp-local/compare/main...HEAD

@@ -154,11 +154,17 @@ def test_wire_numeric_decimal_string() -> None:
     assert duckdb_value_to_bq_wire(Decimal("3.14"), f) == {"v": "3.14"}
 
 
-def test_wire_timestamp_epoch_seconds() -> None:
+def test_wire_timestamp_epoch_microseconds() -> None:
+    """google-cloud-bigquery's CellDataParser parses TIMESTAMP via int(value),
+    so the wire form must be a string-encoded integer count of microseconds
+    since epoch — not float seconds."""
     f = FieldSchema(name="x", type="TIMESTAMP", mode="NULLABLE", fields=None)
     val = dt.datetime(2026, 4, 25, 12, 0, 0, tzinfo=dt.UTC)
     out = duckdb_value_to_bq_wire(val, f)
-    assert out["v"] == "1777118400.000000"
+    assert out["v"] == "1777118400000000"
+    # Sub-second precision is preserved.
+    val2 = dt.datetime(2026, 4, 25, 12, 0, 0, 123456, tzinfo=dt.UTC)
+    assert duckdb_value_to_bq_wire(val2, f)["v"] == "1777118400123456"
 
 
 def test_wire_date_iso() -> None:

@@ -5,6 +5,7 @@ Spec sections: §6 (source-format parsing), §7 (schema resolution),
 """
 
 import csv
+import datetime as _dt
 import io
 import json
 from typing import Any
@@ -481,16 +482,33 @@ def _csv_to_dict_rows(
             parse_errors.append(f"CSV row {row_idx} has {len(row)} columns, expected {len(header)}")
             continue
         payload: dict[str, Any] = {}
+        coerce_failed = False
         # Truncate to header length so over-wide rows under ignore_unknown_values
         # silently drop the trailing columns.
         for col_idx, cell in enumerate(row[: len(header)]):
             name = header[col_idx]
             if cell is _NULL_SENTINEL:
                 payload[name] = None
-            else:
+                continue
+            try:
                 payload[name] = _coerce_csv_cell(cell, by_name.get(name))
+            except _CsvCoerceError as e:
+                parse_errors.append(f"CSV row {row_idx} column {name!r}: {e}")
+                coerce_failed = True
+                break
+        if coerce_failed:
+            continue
         out.append(payload)
     return out, parse_errors
+
+
+class _CsvCoerceError(ValueError):
+    """A CSV cell could not be coerced to the column's declared BigQuery type.
+
+    Raised by ``_coerce_csv_cell``; caught by ``_csv_to_dict_rows`` and
+    bucketed as a parse error so the row can fall under ``maxBadRecords``
+    instead of aborting the entire load.
+    """
 
 
 def _coerce_csv_cell(cell: str, field: FieldSchema | None) -> Any:
@@ -503,12 +521,70 @@ def _coerce_csv_cell(cell: str, field: FieldSchema | None) -> Any:
     # would raise mid-row and abort the whole load.
     if cell == "":
         return None
-    match field.type:
-        case "INT64" | "INTEGER":
-            return int(cell)
-        case "FLOAT64" | "FLOAT" | "NUMERIC" | "BIGNUMERIC":
-            return float(cell)
-        case "BOOL" | "BOOLEAN":
-            return cell.strip().lower() == "true"
-        case _:
-            return cell
+    try:
+        match field.type:
+            case "INT64" | "INTEGER":
+                return int(cell)
+            case "FLOAT64" | "FLOAT" | "NUMERIC" | "BIGNUMERIC":
+                return float(cell)
+            case "BOOL" | "BOOLEAN":
+                return _parse_bool(cell)
+            case "DATE":
+                return _dt.date.fromisoformat(cell)
+            case "TIME":
+                return _dt.time.fromisoformat(cell)
+            case "DATETIME":
+                return _parse_datetime_naive(cell)
+            case "TIMESTAMP":
+                return _parse_timestamp_aware(cell)
+            case "JSON":
+                # Re-serialize after parsing so coerce_value's downstream
+                # JSON handling sees a string with normalized whitespace and
+                # any malformed input is rejected here rather than at INSERT.
+                return json.dumps(json.loads(cell))
+            case _:
+                return cell
+    except (ValueError, TypeError) as e:
+        raise _CsvCoerceError(f"cannot parse {cell!r} as {field.type}: {e}") from e
+
+
+_BOOL_TRUE = {"true", "t", "1", "yes", "y"}
+_BOOL_FALSE = {"false", "f", "0", "no", "n"}
+
+
+def _parse_bool(cell: str) -> bool:
+    low = cell.strip().lower()
+    if low in _BOOL_TRUE:
+        return True
+    if low in _BOOL_FALSE:
+        return False
+    raise ValueError(f"not a boolean: {cell!r}")
+
+
+def _parse_datetime_naive(cell: str) -> _dt.datetime:
+    """BigQuery DATETIME has no timezone. Accept ``YYYY-MM-DD[ T]HH:MM:SS[.fff]``."""
+    normalized = cell.replace("T", " ", 1)
+    dt = _dt.datetime.fromisoformat(normalized)
+    if dt.tzinfo is not None:
+        raise ValueError("DATETIME values must not include a timezone offset")
+    return dt
+
+
+def _parse_timestamp_aware(cell: str) -> _dt.datetime:
+    """BigQuery TIMESTAMP is always tz-aware (UTC if not specified).
+
+    Accept the common BigQuery wire shapes:
+        2024-01-15 12:34:56 UTC
+        2024-01-15T12:34:56Z
+        2024-01-15T12:34:56.123456+00:00
+        2024-01-15 12:34:56          (assume UTC)
+    """
+    s = cell.strip()
+    if s.endswith(" UTC"):
+        s = s[: -len(" UTC")]
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = _dt.datetime.fromisoformat(s.replace("T", " ", 1))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_dt.UTC)
+    return dt

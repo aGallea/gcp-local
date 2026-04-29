@@ -531,3 +531,64 @@ async def test_load_max_bad_records_and_ignore_unknown_values(emulator: dict[str
         )
     )
     assert [(r["id"], r["name"]) for r in out] == [(1, "alice"), (2, "bob")]
+
+
+@pytest.mark.asyncio
+async def test_csv_load_temporal_and_json_coercion(emulator: dict[str, int]) -> None:
+    """End-to-end CSV load with DATE / TIMESTAMP / DATETIME / TIME / JSON columns."""
+    import datetime as dt
+    import json as _json
+
+    client = _client(emulator)
+    ds_ref = DatasetReference("test-project", "ds_load_csv_types")
+    await _run(lambda: client.create_dataset(bigquery.Dataset(ds_ref)))
+    table_ref = TableReference(ds_ref, "rows")
+    schema = [
+        SchemaField("id", "INT64", mode="REQUIRED"),
+        SchemaField("d", "DATE"),
+        SchemaField("t", "TIME"),
+        SchemaField("dt", "DATETIME"),
+        SchemaField("ts", "TIMESTAMP"),
+        SchemaField("payload", "JSON"),
+    ]
+    csv_text = (
+        "id,d,t,dt,ts,payload\n"
+        '1,2024-01-15,12:34:56,2024-01-15T06:00:00,2024-01-15T12:34:56Z,"{""k"":1}"\n'
+        '2,2025-12-31,23:59:59,2025-12-31T23:59:59,2025-12-31 23:59:59 UTC,"[1,2,3]"\n'
+    )
+    job_config = bigquery.LoadJobConfig(
+        schema=schema,
+        source_format="CSV",
+        skip_leading_rows=1,
+    )
+    job = await _run(
+        lambda: client.load_table_from_file(
+            io.BytesIO(csv_text.encode()),
+            table_ref,
+            job_config=job_config,
+        )
+    )
+    await _run(lambda: job.result())
+    rows = await _run(
+        lambda: list(
+            client.query(
+                "SELECT id, d, t, dt, ts, payload "
+                "FROM `test-project.ds_load_csv_types.rows` ORDER BY id"
+            ).result()
+        )
+    )
+    assert rows[0]["d"] == dt.date(2024, 1, 15)
+    assert rows[0]["t"] == dt.time(12, 34, 56)
+    assert rows[0]["dt"] == dt.datetime(2024, 1, 15, 6, 0, 0)
+    assert rows[0]["ts"] == dt.datetime(2024, 1, 15, 12, 34, 56, tzinfo=dt.UTC)
+    # JSON cells round-trip as already-parsed Python objects via the BQ client.
+    payload0 = rows[0]["payload"]
+    payload1 = rows[1]["payload"]
+    assert (
+        payload0 == {"k": 1} if not isinstance(payload0, str) else _json.loads(payload0) == {"k": 1}
+    )
+    assert (
+        payload1 == [1, 2, 3]
+        if not isinstance(payload1, str)
+        else _json.loads(payload1) == [1, 2, 3]
+    )
