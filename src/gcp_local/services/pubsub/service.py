@@ -61,7 +61,11 @@ class PubSubService:
             self._sweeper = None
         if self._server is not None:
             with contextlib.suppress(Exception):
-                await self._server.stop(grace=None)
+                # grace=0 force-cancels in-flight RPCs immediately. ``None``
+                # would block indefinitely waiting for active StreamingPull
+                # streams to finish — they don't on their own; the long-poll
+                # only exits when the client cancels. CI saw a 1h hang here.
+                await self._server.stop(grace=0)
         self._started = False
 
     async def reset_state(self) -> None:
