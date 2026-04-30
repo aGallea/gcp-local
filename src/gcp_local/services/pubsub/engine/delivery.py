@@ -25,7 +25,7 @@ class RedeliverySweeper:
     ) -> None:
         self._backlogs = backlogs
         self._tick_interval = tick_interval
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
 
     async def start(self) -> None:

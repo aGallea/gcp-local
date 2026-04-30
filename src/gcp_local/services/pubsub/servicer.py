@@ -7,10 +7,13 @@ import contextlib
 import datetime as dt
 import itertools
 from collections import defaultdict
-from typing import Any, NoReturn, Protocol
+from collections.abc import AsyncIterator
+from typing import Any, NoReturn
 
 import grpc
+from google.protobuf import empty_pb2
 
+from gcp_local.core.state_hub import StateHub
 from gcp_local.generated.google.pubsub.v1 import pubsub_pb2, pubsub_pb2_grpc
 from gcp_local.services.pubsub.engine.backlog import (
     DeliveredMessage,
@@ -34,11 +37,7 @@ from gcp_local.services.pubsub.storage import PubSubStorage
 _LONG_POLL_TIMEOUT_SECONDS = 90.0
 
 
-class _StateHubLike(Protocol):
-    async def publish(self, event: str, payload: dict) -> None: ...
-
-
-async def _abort(context: grpc.aio.ServicerContext, exc: Exception) -> NoReturn:
+async def _abort(context: grpc.aio.ServicerContext[Any, Any], exc: Exception) -> NoReturn:
     code = grpc.StatusCode.INVALID_ARGUMENT if isinstance(exc, InvalidName) else grpc_code_for(exc)
     await context.abort(code, str(exc))
     raise AssertionError("unreachable")  # context.abort always raises
@@ -136,12 +135,12 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
         self,
         *,
         storage: PubSubStorage,
-        state_hub: _StateHubLike | None = None,
+        state_hub: StateHub | None = None,
     ) -> None:
         self._storage = storage
         self._state_hub = state_hub
         # Per-topic monotonic message-id counters. Keyed by (project, topic_id).
-        self._counters: dict[tuple[str, str], itertools.count] = defaultdict(
+        self._counters: dict[tuple[str, str], itertools.count[int]] = defaultdict(
             lambda: itertools.count(1)
         )
         # asyncio.Event per (project, sub_id) registered by SubscriberServicer
@@ -152,7 +151,7 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
     async def CreateTopic(
         self,
         request: pubsub_pb2.Topic,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.Topic:
         try:
             rec = _topic_proto_to_record(request)
@@ -164,7 +163,7 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
     async def GetTopic(
         self,
         request: pubsub_pb2.GetTopicRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.Topic:
         try:
             project, topic_id = _parse_topic(request.topic)
@@ -176,7 +175,7 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
     async def UpdateTopic(
         self,
         request: pubsub_pb2.UpdateTopicRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.Topic:
         try:
             project, topic_id = _parse_topic(request.topic.name)
@@ -198,10 +197,8 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
     async def DeleteTopic(
         self,
         request: pubsub_pb2.DeleteTopicRequest,
-        context: grpc.aio.ServicerContext,
-    ):
-        from google.protobuf import empty_pb2
-
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
         try:
             project, topic_id = _parse_topic(request.topic)
             await self._storage.delete_topic(project, topic_id)
@@ -212,7 +209,7 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
     async def ListTopics(
         self,
         request: pubsub_pb2.ListTopicsRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.ListTopicsResponse:
         if not request.project.startswith("projects/"):
             await _abort(context, InvalidArgument(f"Invalid project: {request.project!r}"))
@@ -236,7 +233,7 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
     async def ListTopicSubscriptions(
         self,
         request: pubsub_pb2.ListTopicSubscriptionsRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.ListTopicSubscriptionsResponse:
         try:
             project, topic_id = _parse_topic(request.topic)
@@ -250,7 +247,7 @@ class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
     async def Publish(
         self,
         request: pubsub_pb2.PublishRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.PublishResponse:
         try:
             project, topic_id = _parse_topic(request.topic)
@@ -340,7 +337,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def CreateSubscription(
         self,
         request: pubsub_pb2.Subscription,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.Subscription:
         try:
             rec = _sub_proto_to_record(request)
@@ -352,7 +349,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def GetSubscription(
         self,
         request: pubsub_pb2.GetSubscriptionRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.Subscription:
         try:
             project, sub_id = _parse_subscription(request.subscription)
@@ -364,7 +361,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def UpdateSubscription(
         self,
         request: pubsub_pb2.UpdateSubscriptionRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.Subscription:
         try:
             project, sub_id = _parse_subscription(request.subscription.name)
@@ -401,10 +398,8 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def DeleteSubscription(
         self,
         request: pubsub_pb2.DeleteSubscriptionRequest,
-        context: grpc.aio.ServicerContext,
-    ):
-        from google.protobuf import empty_pb2
-
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
         try:
             project, sub_id = _parse_subscription(request.subscription)
             await self._storage.delete_subscription(project, sub_id)
@@ -416,7 +411,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def ListSubscriptions(
         self,
         request: pubsub_pb2.ListSubscriptionsRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.ListSubscriptionsResponse:
         if not request.project.startswith("projects/"):
             await _abort(context, InvalidArgument(f"Invalid project: {request.project!r}"))
@@ -440,7 +435,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def Pull(
         self,
         request: pubsub_pb2.PullRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.PullResponse:
         try:
             project, sub_id = _parse_subscription(request.subscription)
@@ -481,10 +476,8 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def Acknowledge(
         self,
         request: pubsub_pb2.AcknowledgeRequest,
-        context: grpc.aio.ServicerContext,
-    ):
-        from google.protobuf import empty_pb2
-
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
         try:
             project, sub_id = _parse_subscription(request.subscription)
             backlog, lock = await self._get_backlog(project, sub_id)
@@ -497,10 +490,8 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def ModifyAckDeadline(
         self,
         request: pubsub_pb2.ModifyAckDeadlineRequest,
-        context: grpc.aio.ServicerContext,
-    ):
-        from google.protobuf import empty_pb2
-
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
         try:
             project, sub_id = _parse_subscription(request.subscription)
             backlog, lock = await self._get_backlog(project, sub_id)
@@ -515,7 +506,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def Seek(
         self,
         request: pubsub_pb2.SeekRequest,
-        context: grpc.aio.ServicerContext,
+        context: grpc.aio.ServicerContext[Any, Any],
     ) -> pubsub_pb2.SeekResponse:
         """Rewind/forward a subscription to a wall-clock time.
 
@@ -576,9 +567,9 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
 
     async def StreamingPull(
         self,
-        request_iterator,
-        context: grpc.aio.ServicerContext,
-    ):
+        request_iterator: AsyncIterator[pubsub_pb2.StreamingPullRequest],
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> AsyncIterator[pubsub_pb2.StreamingPullResponse]:
         """Bidirectional stream: yields ReceivedMessages, consumes ack/modack/flow updates.
 
         The first request must include ``subscription`` and any flow-control
