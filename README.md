@@ -9,7 +9,7 @@ A local emulator for Google Cloud services — the GCP counterpart to LocalStack
 
 ## Status
 
-Alpha. Three services are implemented today; two more are planned for v1; see [ROADMAP.md](ROADMAP.md) for what's ahead.
+Alpha. Four services are implemented today; one more is planned for v1; see [ROADMAP.md](ROADMAP.md) for what's ahead.
 
 ## Services at a glance
 
@@ -18,7 +18,7 @@ Alpha. Three services are implemented today; two more are planned for v1; see [R
 | BigQuery | Alpha | 9050 | REST | [usage](docs/services/bigquery.md) | [internals](docs/architecture/bigquery.md) |
 | GCS | Alpha | 4443 | REST | [usage](docs/services/gcs.md) | [internals](docs/architecture/gcs.md) |
 | Secret Manager | Alpha | 8086 | gRPC | [usage](docs/services/secret-manager.md) | [internals](docs/architecture/secret-manager.md) |
-| Pub/Sub | Planned | 8085 | gRPC | — | — |
+| Pub/Sub | Alpha | 8085 | gRPC | [usage](docs/services/pubsub.md) | [internals](docs/architecture/pubsub.md) |
 | Firestore | Planned | (TBD) | gRPC | — | — |
 
 Status vocabulary: **Stable** = feature-complete for v1, **Alpha** = implemented and in use but may shift, **Planned** = committed to v1 but not started, **Future** = post-v1.
@@ -124,7 +124,7 @@ print(
 
 ## Documentation map
 
-- **Use a service** — [`docs/services/`](docs/services/) (one file per service: BigQuery, GCS, Secret Manager).
+- **Use a service** — [`docs/services/`](docs/services/) (one file per service: BigQuery, GCS, Secret Manager, Pub/Sub).
 - **Run / deploy** — [`docs/deployment.md`](docs/deployment.md).
 - **Architecture & internals** — [`docs/architecture/overview.md`](docs/architecture/overview.md) and the per-service files alongside it.
 - **Roadmap** — [`ROADMAP.md`](ROADMAP.md).

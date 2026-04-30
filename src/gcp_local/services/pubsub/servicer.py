@@ -1,0 +1,704 @@
+"""Pub/Sub gRPC servicers."""
+
+import asyncio
+import base64
+import bisect
+import contextlib
+import datetime as dt
+import itertools
+from collections import defaultdict
+from collections.abc import AsyncIterator
+from typing import Any, NoReturn
+
+import grpc
+from google.protobuf import empty_pb2
+
+from gcp_local.core.state_hub import StateHub
+from gcp_local.generated.google.pubsub.v1 import pubsub_pb2, pubsub_pb2_grpc
+from gcp_local.services.pubsub.engine.backlog import (
+    DeliveredMessage,
+    SubscriptionBacklog,
+)
+from gcp_local.services.pubsub.engine.streaming import FlowControl
+from gcp_local.services.pubsub.errors import (
+    InvalidArgument,
+    PubSubError,
+    grpc_code_for,
+)
+from gcp_local.services.pubsub.models import MessageRecord, SubscriptionRecord, TopicRecord
+from gcp_local.services.pubsub.names import (
+    InvalidName,
+    parse_subscription_name,
+    parse_topic_name,
+    validate_resource_id,
+)
+from gcp_local.services.pubsub.storage import PubSubStorage
+
+_LONG_POLL_TIMEOUT_SECONDS = 90.0
+
+
+async def _abort(context: grpc.aio.ServicerContext[Any, Any], exc: Exception) -> NoReturn:
+    code = grpc.StatusCode.INVALID_ARGUMENT if isinstance(exc, InvalidName) else grpc_code_for(exc)
+    await context.abort(code, str(exc))
+    raise AssertionError("unreachable")  # context.abort always raises
+
+
+def _parse_topic(name: str) -> tuple[str, str]:
+    try:
+        project, topic_id = parse_topic_name(name)
+    except InvalidName as e:
+        raise e
+    validate_resource_id(topic_id)
+    return project, topic_id
+
+
+def _encode_token(offset: int) -> str:
+    return base64.urlsafe_b64encode(str(offset).encode()).decode()
+
+
+def _decode_token(token: str) -> int:
+    if not token:
+        return 0
+    try:
+        return int(base64.urlsafe_b64decode(token.encode()).decode())
+    except (ValueError, UnicodeDecodeError) as e:
+        raise InvalidArgument(f"Invalid page_token: {token!r}") from e
+
+
+def _topic_record_to_proto(rec: TopicRecord) -> pubsub_pb2.Topic:
+    return pubsub_pb2.Topic(
+        name=f"projects/{rec.project}/topics/{rec.topic_id}",
+        labels=dict(rec.labels),
+    )
+
+
+def _topic_proto_to_record(msg: pubsub_pb2.Topic) -> TopicRecord:
+    project, topic_id = _parse_topic(msg.name)
+    return TopicRecord(
+        project=project,
+        topic_id=topic_id,
+        labels=dict(msg.labels),
+        message_storage_policy=None,
+        kms_key_name=msg.kms_key_name or None,
+        schema_settings=None,
+    )
+
+
+def _parse_subscription(name: str) -> tuple[str, str]:
+    project, sub_id = parse_subscription_name(name)
+    validate_resource_id(sub_id)
+    return project, sub_id
+
+
+def _sub_record_to_proto(rec: SubscriptionRecord) -> pubsub_pb2.Subscription:
+    proto = pubsub_pb2.Subscription(
+        name=f"projects/{rec.project}/subscriptions/{rec.subscription_id}",
+        topic=f"projects/{rec.topic_project}/topics/{rec.topic_id}",
+        ack_deadline_seconds=rec.ack_deadline_seconds,
+        enable_message_ordering=rec.enable_message_ordering,
+        filter=rec.filter,
+        labels=dict(rec.labels),
+        enable_exactly_once_delivery=rec.enable_exactly_once_delivery,
+    )
+    if rec.push_config is not None:
+        proto.push_config.CopyFrom(pubsub_pb2.PushConfig(**rec.push_config))
+    return proto
+
+
+def _sub_proto_to_record(msg: pubsub_pb2.Subscription) -> SubscriptionRecord:
+    sub_proj, sub_id = _parse_subscription(msg.name)
+    topic_proj, topic_id = _parse_topic(msg.topic)
+    push_config: dict[str, Any] | None = None
+    if msg.HasField("push_config"):
+        push_config = {"push_endpoint": msg.push_config.push_endpoint}
+        if msg.push_config.attributes:
+            push_config["attributes"] = dict(msg.push_config.attributes)
+    return SubscriptionRecord(
+        project=sub_proj,
+        subscription_id=sub_id,
+        topic_project=topic_proj,
+        topic_id=topic_id,
+        ack_deadline_seconds=msg.ack_deadline_seconds or 10,
+        enable_message_ordering=msg.enable_message_ordering,
+        push_config=push_config,
+        filter=msg.filter or "",
+        dead_letter_policy=None,
+        retry_policy=None,
+        labels=dict(msg.labels),
+        enable_exactly_once_delivery=msg.enable_exactly_once_delivery,
+        create_time=dt.datetime.now(dt.UTC),
+    )
+
+
+class PublisherServicer(pubsub_pb2_grpc.PublisherServicer):
+    def __init__(
+        self,
+        *,
+        storage: PubSubStorage,
+        state_hub: StateHub | None = None,
+    ) -> None:
+        self._storage = storage
+        self._state_hub = state_hub
+        # Per-topic monotonic message-id counters. Keyed by (project, topic_id).
+        self._counters: dict[tuple[str, str], itertools.count[int]] = defaultdict(
+            lambda: itertools.count(1)
+        )
+        # asyncio.Event per (project, sub_id) registered by SubscriberServicer
+        # so Pull / StreamingPull can wake on Publish. Set by the subscriber side
+        # at first-pull time.
+        self.deliverable_events: dict[tuple[str, str], asyncio.Event] = {}
+
+    async def CreateTopic(
+        self,
+        request: pubsub_pb2.Topic,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.Topic:
+        try:
+            rec = _topic_proto_to_record(request)
+            await self._storage.create_topic(rec)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _topic_record_to_proto(rec)
+
+    async def GetTopic(
+        self,
+        request: pubsub_pb2.GetTopicRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.Topic:
+        try:
+            project, topic_id = _parse_topic(request.topic)
+            rec = await self._storage.get_topic(project, topic_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _topic_record_to_proto(rec)
+
+    async def UpdateTopic(
+        self,
+        request: pubsub_pb2.UpdateTopicRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.Topic:
+        try:
+            project, topic_id = _parse_topic(request.topic.name)
+            existing = await self._storage.get_topic(project, topic_id)
+            paths = set(request.update_mask.paths)
+            updated = TopicRecord(
+                project=existing.project,
+                topic_id=existing.topic_id,
+                labels=dict(request.topic.labels) if "labels" in paths else dict(existing.labels),
+                message_storage_policy=existing.message_storage_policy,
+                kms_key_name=existing.kms_key_name,
+                schema_settings=existing.schema_settings,
+            )
+            await self._storage.update_topic(updated)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _topic_record_to_proto(updated)
+
+    async def DeleteTopic(
+        self,
+        request: pubsub_pb2.DeleteTopicRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
+        try:
+            project, topic_id = _parse_topic(request.topic)
+            await self._storage.delete_topic(project, topic_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return empty_pb2.Empty()
+
+    async def ListTopics(
+        self,
+        request: pubsub_pb2.ListTopicsRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.ListTopicsResponse:
+        if not request.project.startswith("projects/"):
+            await _abort(context, InvalidArgument(f"Invalid project: {request.project!r}"))
+        project = request.project[len("projects/") :]
+        try:
+            offset = _decode_token(request.page_token)
+        except InvalidArgument as e:
+            await _abort(context, e)
+        page_size = request.page_size or 100
+        rows = sorted(
+            await self._storage.list_topics(project),
+            key=lambda r: r.topic_id,
+        )
+        slice_ = rows[offset : offset + page_size]
+        next_token = _encode_token(offset + page_size) if offset + page_size < len(rows) else ""
+        return pubsub_pb2.ListTopicsResponse(
+            topics=[_topic_record_to_proto(r) for r in slice_],
+            next_page_token=next_token,
+        )
+
+    async def ListTopicSubscriptions(
+        self,
+        request: pubsub_pb2.ListTopicSubscriptionsRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.ListTopicSubscriptionsResponse:
+        try:
+            project, topic_id = _parse_topic(request.topic)
+            # Verify topic exists before listing.
+            await self._storage.get_topic(project, topic_id)
+            names = await self._storage.list_topic_subscriptions(project, topic_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return pubsub_pb2.ListTopicSubscriptionsResponse(subscriptions=sorted(names))
+
+    async def Publish(
+        self,
+        request: pubsub_pb2.PublishRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.PublishResponse:
+        try:
+            project, topic_id = _parse_topic(request.topic)
+            # Verify topic exists.
+            await self._storage.get_topic(project, topic_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+
+        message_ids: list[str] = []
+        counter = self._counters[(project, topic_id)]
+        for proto_msg in request.messages:
+            seq = next(counter)
+            mid = f"{topic_id}-{seq}"
+            now = dt.datetime.now(dt.UTC)
+            rec = MessageRecord(
+                message_id=mid,
+                publish_time=now,
+                data=bytes(proto_msg.data),
+                attributes=dict(proto_msg.attributes),
+                ordering_key=proto_msg.ordering_key or "",
+            )
+            await self._storage.append_message(project, topic_id, rec)
+            message_ids.append(mid)
+            if self._state_hub is not None:
+                await self._state_hub.publish(
+                    "pubsub.message.published",
+                    {
+                        "topic": request.topic,
+                        "message_id": mid,
+                        "attributes": dict(proto_msg.attributes),
+                        "size_bytes": len(proto_msg.data),
+                        "publish_time": now.isoformat(),
+                    },
+                )
+
+        # Wake any waiting Pull / StreamingPull on subscriptions of this topic.
+        # The SubscriberServicer registers Events keyed by (sub_project, sub_id);
+        # we look up subs that point at this topic via storage.
+        sub_names = await self._storage.list_topic_subscriptions(project, topic_id)
+        for full_name in sub_names:
+            # parse "projects/<p>/subscriptions/<s>"
+            parts = full_name.split("/")
+            sub_key = (parts[1], parts[3])
+            event = self.deliverable_events.get(sub_key)
+            if event is not None:
+                event.set()
+
+        return pubsub_pb2.PublishResponse(message_ids=message_ids)
+
+
+class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
+    def __init__(
+        self,
+        *,
+        storage: PubSubStorage,
+        publisher: PublisherServicer,
+    ) -> None:
+        self._storage = storage
+        self._publisher = publisher  # used to register deliverable events
+        self._backlogs: dict[tuple[str, str], SubscriptionBacklog] = {}
+        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    async def _get_backlog(
+        self, project: str, sub_id: str
+    ) -> tuple[SubscriptionBacklog, asyncio.Lock]:
+        """Lazily create a backlog + lock the first time a subscription is touched."""
+        key = (project, sub_id)
+        if key not in self._backlogs:
+            sub = await self._storage.get_subscription(project, sub_id)
+            backlog = SubscriptionBacklog(
+                ack_deadline_seconds=sub.ack_deadline_seconds,
+                enable_ordering=sub.enable_message_ordering,
+            )
+            self._backlogs[key] = backlog
+            self._locks[key] = asyncio.Lock()
+            # Register the deliverable Event with the publisher so Publish wakes us up.
+            self._publisher.deliverable_events[key] = backlog.deliverable
+        return self._backlogs[key], self._locks[key]
+
+    async def _drop_backlog(self, project: str, sub_id: str) -> None:
+        """Called from DeleteSubscription so the backlog is cleaned up."""
+        key = (project, sub_id)
+        self._backlogs.pop(key, None)
+        self._locks.pop(key, None)
+        self._publisher.deliverable_events.pop(key, None)
+
+    async def CreateSubscription(
+        self,
+        request: pubsub_pb2.Subscription,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.Subscription:
+        try:
+            rec = _sub_proto_to_record(request)
+            await self._storage.create_subscription(rec)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _sub_record_to_proto(rec)
+
+    async def GetSubscription(
+        self,
+        request: pubsub_pb2.GetSubscriptionRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.Subscription:
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            rec = await self._storage.get_subscription(project, sub_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _sub_record_to_proto(rec)
+
+    async def UpdateSubscription(
+        self,
+        request: pubsub_pb2.UpdateSubscriptionRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.Subscription:
+        try:
+            project, sub_id = _parse_subscription(request.subscription.name)
+            existing = await self._storage.get_subscription(project, sub_id)
+            paths = set(request.update_mask.paths)
+            updated = SubscriptionRecord(
+                project=existing.project,
+                subscription_id=existing.subscription_id,
+                topic_project=existing.topic_project,
+                topic_id=existing.topic_id,
+                ack_deadline_seconds=(
+                    request.subscription.ack_deadline_seconds
+                    if "ack_deadline_seconds" in paths
+                    else existing.ack_deadline_seconds
+                ),
+                enable_message_ordering=existing.enable_message_ordering,
+                push_config=existing.push_config,
+                filter=existing.filter,
+                dead_letter_policy=existing.dead_letter_policy,
+                retry_policy=existing.retry_policy,
+                labels=(
+                    dict(request.subscription.labels)
+                    if "labels" in paths
+                    else dict(existing.labels)
+                ),
+                enable_exactly_once_delivery=existing.enable_exactly_once_delivery,
+                create_time=existing.create_time,
+            )
+            await self._storage.update_subscription(updated)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return _sub_record_to_proto(updated)
+
+    async def DeleteSubscription(
+        self,
+        request: pubsub_pb2.DeleteSubscriptionRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            await self._storage.delete_subscription(project, sub_id)
+            await self._drop_backlog(project, sub_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return empty_pb2.Empty()
+
+    async def ListSubscriptions(
+        self,
+        request: pubsub_pb2.ListSubscriptionsRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.ListSubscriptionsResponse:
+        if not request.project.startswith("projects/"):
+            await _abort(context, InvalidArgument(f"Invalid project: {request.project!r}"))
+        project = request.project[len("projects/") :]
+        try:
+            offset = _decode_token(request.page_token)
+        except InvalidArgument as e:
+            await _abort(context, e)
+        page_size = request.page_size or 100
+        rows = sorted(
+            await self._storage.list_subscriptions(project),
+            key=lambda r: r.subscription_id,
+        )
+        slice_ = rows[offset : offset + page_size]
+        next_token = _encode_token(offset + page_size) if offset + page_size < len(rows) else ""
+        return pubsub_pb2.ListSubscriptionsResponse(
+            subscriptions=[_sub_record_to_proto(r) for r in slice_],
+            next_page_token=next_token,
+        )
+
+    async def Pull(
+        self,
+        request: pubsub_pb2.PullRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.PullResponse:
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            max_messages = request.max_messages or 1
+            topic_proj, topic_id = await self._resolve_topic(project, sub_id)
+            # Try once; if empty and !return_immediately, long-poll on the
+            # deliverable Event.
+            async with lock:
+                messages = await self._storage.get_messages(topic_proj, topic_id)
+                delivered = await backlog.pull(
+                    messages=messages,
+                    max_count=max_messages,
+                    now=dt.datetime.now(dt.UTC),
+                )
+            if delivered or request.return_immediately:
+                return self._pull_response(delivered)
+            # Long-poll: wait up to 90s for a new publish or NACK.
+            try:
+                backlog.deliverable.clear()
+                await asyncio.wait_for(
+                    backlog.deliverable.wait(),
+                    timeout=_LONG_POLL_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                return self._pull_response([])
+            async with lock:
+                messages = await self._storage.get_messages(topic_proj, topic_id)
+                delivered = await backlog.pull(
+                    messages=messages,
+                    max_count=max_messages,
+                    now=dt.datetime.now(dt.UTC),
+                )
+            return self._pull_response(delivered)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+
+    async def Acknowledge(
+        self,
+        request: pubsub_pb2.AcknowledgeRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            async with lock:
+                await backlog.acknowledge(list(request.ack_ids))
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return empty_pb2.Empty()
+
+    async def ModifyAckDeadline(
+        self,
+        request: pubsub_pb2.ModifyAckDeadlineRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> empty_pb2.Empty:
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            async with lock:
+                await backlog.modify_ack_deadline(
+                    [(aid, request.ack_deadline_seconds) for aid in request.ack_ids]
+                )
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return empty_pb2.Empty()
+
+    async def Seek(
+        self,
+        request: pubsub_pb2.SeekRequest,
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> pubsub_pb2.SeekResponse:
+        """Rewind/forward a subscription to a wall-clock time.
+
+        Snapshot-based Seek is intentionally not supported in v1 — snapshots
+        are not implemented at all.
+        """
+        if request.HasField("snapshot"):
+            await context.abort(
+                grpc.StatusCode.UNIMPLEMENTED,
+                "Snapshot-based Seek is not supported in v1.",
+            )
+            raise AssertionError("unreachable")
+        if not request.HasField("time"):
+            await _abort(
+                context,
+                InvalidArgument("Seek requires either time or snapshot"),
+            )
+        target_time = request.time.ToDatetime().replace(tzinfo=dt.UTC)
+        try:
+            project, sub_id = _parse_subscription(request.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            topic_proj, topic_id = await self._resolve_topic(project, sub_id)
+            async with lock:
+                messages = await self._storage.get_messages(topic_proj, topic_id)
+                # Binary search for first message with publish_time >= target.
+                times = [m.publish_time for m in messages]
+                idx = bisect.bisect_left(times, target_time)
+                await backlog.seek(message_index=idx)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+        return pubsub_pb2.SeekResponse()
+
+    async def _resolve_topic(self, project: str, sub_id: str) -> tuple[str, str]:
+        """Return the (topic_project, topic_id) pair for a subscription."""
+        sub = await self._storage.get_subscription(project, sub_id)
+        return sub.topic_project, sub.topic_id
+
+    def _pull_response(self, delivered: list[DeliveredMessage]) -> pubsub_pb2.PullResponse:
+        from google.protobuf.timestamp_pb2 import Timestamp
+
+        received: list[pubsub_pb2.ReceivedMessage] = []
+        for d in delivered:
+            ts = Timestamp()
+            ts.FromDatetime(d.message.publish_time)
+            received.append(
+                pubsub_pb2.ReceivedMessage(
+                    ack_id=d.ack_id,
+                    message=pubsub_pb2.PubsubMessage(
+                        data=d.message.data,
+                        attributes=d.message.attributes,
+                        message_id=d.message.message_id,
+                        publish_time=ts,
+                        ordering_key=d.message.ordering_key or "",
+                    ),
+                )
+            )
+        return pubsub_pb2.PullResponse(received_messages=received)
+
+    async def StreamingPull(
+        self,
+        request_iterator: AsyncIterator[pubsub_pb2.StreamingPullRequest],
+        context: grpc.aio.ServicerContext[Any, Any],
+    ) -> AsyncIterator[pubsub_pb2.StreamingPullResponse]:
+        """Bidirectional stream: yields ReceivedMessages, consumes ack/modack/flow updates.
+
+        The first request must include ``subscription`` and any flow-control
+        fields. A side coroutine drains follow-up requests and applies their
+        ``ack_ids`` / ``modify_deadline_*`` to the backlog, crediting the
+        flow-control budget on each ack or NACK (modack with delta=0).
+
+        On context cancel (``context.is_active() == False``) the consumer task
+        is cancelled and the generator exits cleanly.
+        """
+        # Pull the first request out of the iterator. gRPC hands us an async
+        # iterator; the test fixtures use plain async generators. Both expose
+        # ``__anext__``.
+        try:
+            first = await request_iterator.__anext__()
+        except StopAsyncIteration:
+            await _abort(
+                context,
+                InvalidArgument("StreamingPull requires at least one request"),
+            )
+        if not first.subscription:
+            await _abort(
+                context,
+                InvalidArgument("StreamingPull initial request must set subscription"),
+            )
+
+        try:
+            project, sub_id = _parse_subscription(first.subscription)
+            backlog, lock = await self._get_backlog(project, sub_id)
+            topic_proj, topic_id = await self._resolve_topic(project, sub_id)
+        except (PubSubError, InvalidName) as e:
+            await _abort(context, e)
+
+        flow = FlowControl(
+            max_outstanding_messages=first.max_outstanding_messages or 0,
+            max_outstanding_bytes=first.max_outstanding_bytes or 0,
+        )
+        # Track in-flight (ack_id → bytes) so we can credit flow on ack/NACK.
+        in_flight_bytes: dict[str, int] = {}
+
+        async def _consume_client_requests() -> None:
+            async for req in request_iterator:
+                if req.ack_ids:
+                    async with lock:
+                        await backlog.acknowledge(list(req.ack_ids))
+                    for aid in req.ack_ids:
+                        flow.on_ack(in_flight_bytes.pop(aid, 0))
+                if req.modify_deadline_ack_ids:
+                    items = list(
+                        zip(
+                            req.modify_deadline_ack_ids,
+                            req.modify_deadline_seconds,
+                            strict=False,
+                        )
+                    )
+                    async with lock:
+                        await backlog.modify_ack_deadline(items)
+                    for aid, secs in items:
+                        if secs == 0:
+                            flow.on_ack(in_flight_bytes.pop(aid, 0))
+
+        consumer = asyncio.create_task(_consume_client_requests())
+
+        # grpc.aio.ServicerContext has no is_active(); cancellation propagates
+        # as CancelledError into this generator via the task running it. The
+        # outer `finally` block tears down the consumer task either way.
+        try:
+            while True:
+                async with lock:
+                    messages = await self._storage.get_messages(topic_proj, topic_id)
+                    # Compute per-round message budget. ``0`` means unlimited;
+                    # we cap each round at 100 to bound a single response.
+                    if flow.max_outstanding_messages:
+                        budget = flow.max_outstanding_messages - flow.in_flight_messages
+                    else:
+                        budget = 100
+                    if budget <= 0:
+                        delivered: list[DeliveredMessage] = []
+                    else:
+                        delivered = await backlog.pull(
+                            messages=messages,
+                            max_count=budget,
+                            now=dt.datetime.now(dt.UTC),
+                        )
+                if delivered:
+                    yieldable: list[DeliveredMessage] = []
+                    for d in delivered:
+                        msg_size = len(d.message.data)
+                        if not flow.can_yield(msg_size):
+                            # Push back: NACK so it redelivers when budget frees.
+                            async with lock:
+                                await backlog.modify_ack_deadline([(d.ack_id, 0)])
+                            continue
+                        flow.on_yield(msg_size)
+                        in_flight_bytes[d.ack_id] = msg_size
+                        yieldable.append(d)
+                    if yieldable:
+                        yield self._streaming_response(yieldable)
+                    continue
+                # Nothing to send — wait for a wakeup or context cancel.
+                backlog.deliverable.clear()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(backlog.deliverable.wait(), timeout=10.0)
+        finally:
+            consumer.cancel()
+            # Swallow cancellation and any consumer-side errors — the stream
+            # is already winding down.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await consumer
+
+    def _streaming_response(
+        self, delivered: list[DeliveredMessage]
+    ) -> pubsub_pb2.StreamingPullResponse:
+        from google.protobuf.timestamp_pb2 import Timestamp
+
+        rms: list[pubsub_pb2.ReceivedMessage] = []
+        for d in delivered:
+            ts = Timestamp()
+            ts.FromDatetime(d.message.publish_time)
+            rms.append(
+                pubsub_pb2.ReceivedMessage(
+                    ack_id=d.ack_id,
+                    message=pubsub_pb2.PubsubMessage(
+                        data=d.message.data,
+                        attributes=d.message.attributes,
+                        message_id=d.message.message_id,
+                        publish_time=ts,
+                        ordering_key=d.message.ordering_key or "",
+                    ),
+                )
+            )
+        return pubsub_pb2.StreamingPullResponse(received_messages=rms)

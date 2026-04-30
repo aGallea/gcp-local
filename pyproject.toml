@@ -55,6 +55,7 @@ gcp-local = "gcp_local.cli:entrypoint"
 gcs = "gcp_local.services.gcs:GcsService"
 secret_manager = "gcp_local.services.secret_manager:SecretManagerService"
 bigquery = "gcp_local.services.bigquery:BigQueryService"
+pubsub = "gcp_local.services.pubsub:PubSubService"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gcp_local"]

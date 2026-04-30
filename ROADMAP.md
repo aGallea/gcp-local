@@ -22,7 +22,6 @@ These services are committed to the v1 roadmap. The order is rough; pick whichev
 
 | Service | Wire | Default port | Default env var | Notes |
 |---|---|---|---|---|
-| Pub/Sub | gRPC | 8085 | `PUBSUB_EMULATOR_HOST` | Topics, subscriptions, push delivery |
 | Firestore | gRPC | (TBD) | `FIRESTORE_EMULATOR_HOST` | Documents, queries, indexes |
 
 ## Future (post-v1)
@@ -59,6 +58,16 @@ See the "What's not emulated" section of [`docs/services/gcs.md`](docs/services/
 - **CMEK** — accepted, not enforced.
 - **Rotation schedules** — not implemented.
 - **Audit logging** — not emitted.
+
+### Pub/Sub
+
+- **Push subscriptions** — `pushConfig` is accepted and stored, but the emulator does not POST to the URL.
+- **Subscription filters** — `filter` is accepted and stored, but every message is delivered regardless.
+- **Schema service** — `SchemaService` RPCs not implemented.
+- **Snapshots** — `CreateSnapshot` / `Seek(snapshot=...)` return `UNIMPLEMENTED`.
+- **BigQuery / Cloud Storage subscriptions** — not supported.
+- **Persistence** — Pub/Sub state is in-memory only, even with `PERSIST=1`. Topics, subscriptions, and message backlogs do not survive a restart.
+- **Exactly-once delivery** — `enableExactlyOnceDelivery=true` is accepted but downgraded to at-least-once.
 
 ## How to update this file
 
