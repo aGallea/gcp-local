@@ -27,3 +27,8 @@ def test_pipeline_construction_blocks_until_emulator_ready(pipeline: OrderPipeli
     # If we got here, __init__ saw ok=True within wait_timeout_s.
     # Sanity-check that the admin endpoint is still healthy after setup.
     assert pipeline.is_healthy()
+
+
+def test_secret_seeded(pipeline: OrderPipeline) -> None:
+    # setup() in the fixture should have seeded payment-api-key.
+    assert pipeline._lookup_payment_key().startswith("sk_test_")

@@ -64,5 +64,41 @@ class OrderPipeline:
             return False
 
     def setup(self) -> None:
-        """Idempotent service setup. Subsequent tasks fill this in per-service."""
-        return None
+        """Idempotent service setup. Safe to call repeatedly."""
+        self._setup_secret_manager()
+
+    def _setup_secret_manager(self) -> None:
+        import contextlib
+
+        import grpc
+        from google.api_core.exceptions import AlreadyExists
+        from google.cloud import secretmanager_v1
+        from google.cloud.secretmanager_v1.services.secret_manager_service.transports.grpc import (
+            SecretManagerServiceGrpcTransport,
+        )
+
+        channel = grpc.insecure_channel(os.environ["SECRET_MANAGER_EMULATOR_HOST"])
+        transport = SecretManagerServiceGrpcTransport(channel=channel)
+        self._sm_client = secretmanager_v1.SecretManagerServiceClient(transport=transport)
+
+        parent = f"projects/{self.project}"
+        secret_id = "payment-api-key"
+        with contextlib.suppress(AlreadyExists):
+            self._sm_client.create_secret(
+                parent=parent,
+                secret_id=secret_id,
+                secret={"replication": {"automatic": {}}},
+            )
+
+        # Add a version only if there isn't one yet (idempotency).
+        secret_name = f"{parent}/secrets/{secret_id}"
+        versions = list(self._sm_client.list_secret_versions(parent=secret_name))
+        if not versions:
+            self._sm_client.add_secret_version(
+                parent=secret_name,
+                payload={"data": b"sk_test_demo_only_not_a_real_key"},
+            )
+
+    def _lookup_payment_key(self) -> str:
+        name = f"projects/{self.project}/secrets/payment-api-key/versions/latest"
+        return self._sm_client.access_secret_version(name=name).payload.data.decode("utf-8")
