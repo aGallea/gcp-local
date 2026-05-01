@@ -2,9 +2,13 @@
 
 All notable changes to `gcp-local` are documented here. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once a 1.0 release is cut.
 
-Add new entries under `[Unreleased]` as part of every PR that changes user-visible behavior. Promote `[Unreleased]` to a versioned section when cutting a release.
+Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
 ## [Unreleased]
+
+## [0.1.0] — 2026-05-01
+
+The first managed release. Captures everything that landed up to and including the Firestore service (PR #14) and the GHCR container-image publishing pipeline (PR #15). Future releases are managed by release-please from Conventional Commits going forward.
 
 ### Fixed
 
@@ -42,5 +46,6 @@ The initial alpha covers three of the planned v1 services (BigQuery, GCS, Secret
 - BigQuery `statistics.totalBytesProcessed` always reports `0` — DuckDB does not expose an equivalent metric.
 - Authentication is not enforced on any service; clients must use `AnonymousCredentials`.
 
-[Unreleased]: https://github.com/aGallea/gcp-local/compare/main...HEAD
+[Unreleased]: https://github.com/aGallea/gcp-local/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/aGallea/gcp-local/releases/tag/v0.1.0
 [0.1.0-alpha]: https://github.com/aGallea/gcp-local/releases/tag/v0.1.0-alpha
