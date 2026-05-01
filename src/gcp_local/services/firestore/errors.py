@@ -85,7 +85,7 @@ def grpc_error_for(exc: Exception) -> _GrpcError:
     return _GrpcError(grpc.StatusCode.INTERNAL, "internal error")
 
 
-def abort_with(context: grpc.ServicerContext, exc: Exception) -> None:
+async def abort_with(context: grpc.ServicerContext, exc: Exception) -> None:
     """Convert a Firestore exception into a grpc.aio context.abort."""
     err = grpc_error_for(exc)
-    context.abort(err.code(), err.details())
+    await context.abort(err.code(), err.details())
