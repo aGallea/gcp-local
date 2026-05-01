@@ -292,7 +292,12 @@ async def run_query(
     Pipeline:
       candidates → filter → orderBy → cursors → offset → limit → return
     """
-    from_selectors = getattr(structured_query, "from")
+    # proto-plus wraps "from" → "from_"; our generated pb2 uses "from".
+    # Wire-deserialized objects expose "from_"; objects constructed directly
+    # (e.g. in unit tests via **{"from": [...]}) expose "from".
+    from_selectors = getattr(structured_query, "from_", None) or getattr(
+        structured_query, "from", []
+    )
     if not from_selectors:
         return []
 

@@ -13,6 +13,7 @@ from pathlib import Path
 # wrap ``AddSerializedFile`` in a ``try/except`` falling back to
 # ``FindFileContainingSymbol``. So: client libraries must load first, our
 # pb2 modules second.
+import google.cloud.firestore_v1
 import google.cloud.pubsub_v1
 import google.cloud.secretmanager_v1  # noqa: F401
 import pytest_asyncio
@@ -20,6 +21,7 @@ import pytest_asyncio
 from gcp_local.cli import Settings, run
 from gcp_local.core.registry import ServiceRegistry
 from gcp_local.services.bigquery import BigQueryService
+from gcp_local.services.firestore import FirestoreService
 from gcp_local.services.gcs import GcsService
 from gcp_local.services.pubsub import PubSubService
 from gcp_local.services.secret_manager import SecretManagerService
@@ -46,20 +48,22 @@ async def _wait_for_port(port: int, timeout: float = 5.0) -> None:
 
 @pytest_asyncio.fixture
 async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
-    """Boot the emulator in-process with gcs + secret_manager + bigquery + pubsub on free ports."""
+    """Boot the emulator in-process with gcs + secret_manager + bigquery + pubsub + firestore on free ports."""
     registry = ServiceRegistry()
     registry.register("gcs", GcsService)
     registry.register("secret_manager", SecretManagerService)
     registry.register("bigquery", BigQueryService)
     registry.register("pubsub", PubSubService)
+    registry.register("firestore", FirestoreService)
 
     admin_port = _free_port()
     gcs_port = _free_port()
     secret_manager_port = _free_port()
     bigquery_port = _free_port()
     pubsub_port = _free_port()
+    firestore_port = _free_port()
     settings = Settings(
-        services=["gcs", "secret_manager", "bigquery", "pubsub"],
+        services=["gcs", "secret_manager", "bigquery", "pubsub", "firestore"],
         persist=False,
         data_dir=tmp_path,
         admin_port=admin_port,
@@ -68,6 +72,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
             "secret_manager": secret_manager_port,
             "bigquery": bigquery_port,
             "pubsub": pubsub_port,
+            "firestore": firestore_port,
         },
     )
     task = asyncio.create_task(run(registry, settings), name="emulator")
@@ -77,12 +82,14 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
         await _wait_for_port(secret_manager_port)
         await _wait_for_port(bigquery_port)
         await _wait_for_port(pubsub_port)
+        await _wait_for_port(firestore_port)
         yield {
             "admin_port": admin_port,
             "gcs_port": gcs_port,
             "secret_manager_port": secret_manager_port,
             "bigquery_port": bigquery_port,
             "pubsub_port": pubsub_port,
+            "firestore_port": firestore_port,
         }
     finally:
         task.cancel()
@@ -99,4 +106,5 @@ async def emulator_endpoints(emulator: dict[str, int]) -> dict[str, str]:
         "secret_manager": f"127.0.0.1:{emulator['secret_manager_port']}",
         "bigquery": f"127.0.0.1:{emulator['bigquery_port']}",
         "pubsub": f"127.0.0.1:{emulator['pubsub_port']}",
+        "firestore": f"127.0.0.1:{emulator['firestore_port']}",
     }

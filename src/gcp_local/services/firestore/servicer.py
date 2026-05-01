@@ -73,7 +73,11 @@ def _check_precondition(rec: DocumentRecord | None, precondition: Any) -> None:
         if precondition.exists and rec is None:
             raise errors.FailedPrecondition("document does not exist")
         if not precondition.exists and rec is not None:
-            raise errors.FailedPrecondition("document already exists")
+            # exists=false precondition violated → doc already exists.
+            # Real Firestore returns ALREADY_EXISTS (status 6) here, not
+            # FAILED_PRECONDITION, so we raise DocumentAlreadyExists which
+            # maps to ALREADY_EXISTS in grpc_error_for().
+            raise errors.DocumentAlreadyExists("document already exists")
     elif which == "update_time":
         if rec is None:
             raise errors.FailedPrecondition("document does not exist")
@@ -631,7 +635,10 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
             if txn_id is not None:
                 # Collect all candidate paths (the full scanned set per Firestore
                 # semantics) and register them into the read_set.
-                from_selectors = getattr(request.structured_query, "from")
+                # proto-plus wraps "from" → "from_"; our generated pb2 uses "from".
+                from_selectors = getattr(request.structured_query, "from_", None) or getattr(
+                    request.structured_query, "from", []
+                )
                 if from_selectors:
                     selector = from_selectors[0]
                     async for candidate in self._storage.iter_collection(
@@ -688,7 +695,8 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
 
             # Track full scanned set in the read_set (Firestore semantics).
             if txn_id is not None:
-                from_selectors = getattr(sq, "from")
+                # proto-plus wraps "from" → "from_"; our generated pb2 uses "from".
+                from_selectors = getattr(sq, "from_", None) or getattr(sq, "from", [])
                 if from_selectors:
                     selector = from_selectors[0]
                     async for candidate in self._storage.iter_collection(
