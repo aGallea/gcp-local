@@ -406,16 +406,21 @@ async def test_batch_write_mixed_failure_partial_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_commit_with_transaction_returns_unimplemented() -> None:
+async def test_commit_with_unknown_transaction_returns_invalid_argument() -> None:
+    """Transactional Commit is now implemented (Task 12).
+
+    An unknown (or expired) transaction token results in INVALID_ARGUMENT,
+    not UNIMPLEMENTED.
+    """
     servicer, _, _ = _make_servicer()
     ctx = _FakeContext()
     req = firestore_pb2.CommitRequest(
         database=DB_ROOT,
         writes=[_update_write("docs/x", val="v")],
-        transaction=b"\x01\x02\x03",
+        transaction=b"deadbeefdeadbeef",  # valid ASCII but unknown txn_id
     )
     with pytest.raises(_Aborted):
         await servicer.Commit(req, ctx)
 
     assert ctx.aborted is not None
-    assert ctx.aborted[0] == grpc.StatusCode.UNIMPLEMENTED
+    assert ctx.aborted[0] == grpc.StatusCode.INVALID_ARGUMENT

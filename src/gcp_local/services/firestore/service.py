@@ -10,6 +10,7 @@ from gcp_local.core.context import Context
 from gcp_local.core.service import HealthStatus, Port
 from gcp_local.generated.google.firestore.admin.v1 import firestore_admin_pb2_grpc
 from gcp_local.generated.google.firestore.v1 import firestore_pb2_grpc
+from gcp_local.services.firestore.engine.transactions import TransactionTtlSweeper
 from gcp_local.services.firestore.servicer import (
     FirestoreAdminServicer,
     FirestoreServicer,
@@ -31,6 +32,7 @@ class FirestoreService:
         self._server: grpc.aio.Server | None = None
         self._started = False
         self._storage: FirestoreStorage | None = None
+        self._sweeper: TransactionTtlSweeper | None = None
 
     async def start(self, ctx: Context) -> None:
         # JsonDiskStorage wiring lands in a later task; for now use InMemoryStorage
@@ -48,10 +50,16 @@ class FirestoreService:
             admin_servicer, self._server
         )
         await self._server.start()
+        self._sweeper = TransactionTtlSweeper(self._storage)
+        await self._sweeper.start()
         self._started = True
         log.info("firestore service listening on :%d", port)
 
     async def stop(self) -> None:
+        if self._sweeper is not None:
+            with contextlib.suppress(Exception):
+                await self._sweeper.stop()
+            self._sweeper = None
         if self._server is not None:
             with contextlib.suppress(Exception):
                 # grace=0 force-cancels in-flight RPCs immediately to avoid

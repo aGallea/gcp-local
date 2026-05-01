@@ -24,6 +24,12 @@ from gcp_local.generated.google.firestore.v1 import (
 from gcp_local.services.firestore import errors, names
 from gcp_local.services.firestore.engine.aggregations import aggregate
 from gcp_local.services.firestore.engine.query import run_query
+from gcp_local.services.firestore.engine.transactions import (
+    begin_transaction,
+    commit_transaction,
+    record_read,
+    rollback,
+)
 from gcp_local.services.firestore.engine.transforms import apply_transform
 from gcp_local.services.firestore.models import DocumentRecord
 from gcp_local.services.firestore.storage import FirestoreStorage
@@ -129,7 +135,33 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
     async def GetDocument(self, request: Any, context: Any) -> Any:
         try:
             project, database, path = names.parse_document_path(request.name)
-            rec = await self._storage.get_document(project, database, path)
+
+            # Resolve transaction context if provided
+            txn_id: str | None = None
+            read_time_filter: datetime | None = None
+            if request.transaction:
+                txn_id = request.transaction.decode("ascii")
+                txn = await self._storage.get_transaction(project, database, txn_id)
+                if txn is None:
+                    raise errors.TransactionNotFound(f"transaction {txn_id!r} not found")
+                read_time_filter = txn.read_time
+
+            # Record the read (before actually reading — per Firestore semantics,
+            # the path is in the read_set regardless of whether the doc exists).
+            if txn_id is not None:
+                await record_read(self._storage, project, database, txn_id, path)
+
+            try:
+                rec = await self._storage.get_document(project, database, path)
+            except errors.DocumentNotFound:
+                if txn_id is not None:
+                    raise errors.DocumentNotFound(path) from None
+                raise
+
+            # Filter by read_time if the transaction has one (read-only snapshot).
+            if read_time_filter is not None and rec.update_time > read_time_filter:
+                raise errors.DocumentNotFound(path)
+
             return _doc_to_proto(rec)
         except errors.FirestoreError as exc:
             await errors.abort_with(context, exc)
@@ -268,12 +300,6 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
     # ------------------------------------------------------------------
 
     async def BatchGetDocuments(self, request: Any, context: Any) -> AsyncIterator[Any]:
-        if request.transaction:
-            await errors.abort_with(
-                context, errors.Unimplemented("transactional BatchGetDocuments")
-            )
-            return
-
         try:
             # database field: "projects/<p>/databases/<db>"
             project, database = names.parse_database_root(request.database)
@@ -281,14 +307,41 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
             await errors.abort_with(context, exc)
             return
 
+        # Resolve transaction context if provided
+        txn_id: str | None = None
+        read_time_filter: datetime | None = None
+        if request.transaction:
+            txn_id = request.transaction.decode("ascii")
+            txn = await self._storage.get_transaction(project, database, txn_id)
+            if txn is None:
+                await errors.abort_with(
+                    context, errors.TransactionNotFound(f"transaction {txn_id!r} not found")
+                )
+                return
+            read_time_filter = txn.read_time
+
         names_list = list(request.documents)
         for doc_name in names_list:
             try:
                 _, _, path = names.parse_document_path(doc_name)
-                rec = await self._storage.get_document(project, database, path)
-                yield firestore_pb2.BatchGetDocumentsResponse(found=_doc_to_proto(rec))
-            except errors.DocumentNotFound:
-                yield firestore_pb2.BatchGetDocumentsResponse(missing=doc_name)
+
+                # Record every candidate path in the read_set
+                if txn_id is not None:
+                    try:
+                        await record_read(self._storage, project, database, txn_id, path)
+                    except errors.TransactionNotFound as exc:
+                        await errors.abort_with(context, exc)
+                        return
+
+                try:
+                    rec = await self._storage.get_document(project, database, path)
+                    # Filter by read_time snapshot
+                    if read_time_filter is not None and rec.update_time > read_time_filter:
+                        yield firestore_pb2.BatchGetDocumentsResponse(missing=doc_name)
+                    else:
+                        yield firestore_pb2.BatchGetDocumentsResponse(found=_doc_to_proto(rec))
+                except errors.DocumentNotFound:
+                    yield firestore_pb2.BatchGetDocumentsResponse(missing=doc_name)
             except errors.InvalidName as exc:
                 await errors.abort_with(context, exc)
                 return
@@ -395,16 +448,16 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
     # ------------------------------------------------------------------
 
     async def Commit(self, request: Any, context: Any) -> Any:
-        # Transactional commit is deferred to Task 12.
-        if request.transaction:
-            await errors.abort_with(context, errors.Unimplemented("transactional Commit"))
-            return
-
         try:
             project, database = names.parse_database_root(request.database)
         except errors.FirestoreError as exc:
             await errors.abort_with(context, exc)
             return
+
+        # Determine if this is a transactional commit.
+        txn_id: str | None = None
+        if request.transaction:
+            txn_id = request.transaction.decode("ascii")
 
         commit_time = _now()
         commit_ts = Timestamp()
@@ -412,6 +465,20 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
 
         lock = self._storage.lock(project, database)
         async with lock:
+            # For transactional commits, validate the read-set before applying writes.
+            if txn_id is not None:
+                try:
+                    await commit_transaction(
+                        self._storage,
+                        project,
+                        database,
+                        txn_id,
+                        has_writes=bool(request.writes),
+                    )
+                except errors.FirestoreError as exc:
+                    await errors.abort_with(context, exc)
+                    return
+
             # Phase 1: compute new states for all writes (no persistence yet).
             # If any write fails, the entire commit is aborted.
             pending: list[tuple[str, DocumentRecord | None, list[Any]]] = []
@@ -455,6 +522,10 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
                             "update_time": commit_time.isoformat(),
                         },
                     )
+
+            # Drop the transaction after writes are persisted.
+            if txn_id is not None:
+                await self._storage.drop_transaction(project, database, txn_id)
 
         await self._storage.snapshot(project, database)
         return firestore_pb2.CommitResponse(
@@ -532,11 +603,59 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
     async def RunQuery(self, request: Any, context: Any) -> AsyncIterator[Any]:
         try:
             project, database, parent_path = _parse_run_query_parent(request.parent)
+
+            # Resolve transaction context if provided
+            txn_id: str | None = None
+            read_time_filter: datetime | None = None
+            if request.transaction:
+                txn_id = request.transaction.decode("ascii")
+                txn = await self._storage.get_transaction(project, database, txn_id)
+                if txn is None:
+                    await errors.abort_with(
+                        context,
+                        errors.TransactionNotFound(f"transaction {txn_id!r} not found"),
+                    )
+                    return
+                read_time_filter = txn.read_time
+
+            # Run the query to obtain candidates; the read_set includes ALL
+            # candidates (scanned set), not just those matching the filter.
+            # To achieve this, we need to track the full scanned set separately.
+            # run_query returns only matching records; for the read_set we record
+            # ALL docs in the collection before filtering.
+            # We implement this by collecting all docs via iter_collection and
+            # tracking them, then running the standard query for matching results.
+            if txn_id is not None:
+                # Collect all candidate paths (the full scanned set per Firestore
+                # semantics) and register them into the read_set.
+                from_selectors = getattr(request.structured_query, "from")
+                if from_selectors:
+                    selector = from_selectors[0]
+                    async for candidate in self._storage.iter_collection(
+                        project,
+                        database,
+                        selector.collection_id,
+                        all_descendants=selector.all_descendants,
+                        parent_path=parent_path,
+                    ):
+                        try:
+                            await record_read(
+                                self._storage, project, database, txn_id, candidate.path
+                            )
+                        except errors.TransactionNotFound as exc:
+                            await errors.abort_with(context, exc)
+                            return
+
             records = await run_query(
                 self._storage, project, database, request.structured_query, parent_path
             )
+
             for rec in records:
+                # Filter by read_time snapshot if applicable
+                if read_time_filter is not None and rec.update_time > read_time_filter:
+                    continue
                 yield firestore_pb2.RunQueryResponse(document=_doc_to_proto(rec))
+
             # Final empty response with read_time signals end-of-stream.
             end = firestore_pb2.RunQueryResponse()
             end.read_time.FromDatetime(_now())
@@ -547,8 +666,49 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
     async def RunAggregationQuery(self, request: Any, context: Any) -> AsyncIterator[Any]:
         try:
             project, database, parent_path = _parse_run_query_parent(request.parent)
+
+            # Resolve transaction context if provided
+            txn_id: str | None = None
+            read_time_filter: datetime | None = None
+            if request.transaction:
+                txn_id = request.transaction.decode("ascii")
+                txn = await self._storage.get_transaction(project, database, txn_id)
+                if txn is None:
+                    await errors.abort_with(
+                        context,
+                        errors.TransactionNotFound(f"transaction {txn_id!r} not found"),
+                    )
+                    return
+                read_time_filter = txn.read_time
+
             sq = request.structured_aggregation_query.structured_query
+
+            # Track full scanned set in the read_set (Firestore semantics).
+            if txn_id is not None:
+                from_selectors = getattr(sq, "from")
+                if from_selectors:
+                    selector = from_selectors[0]
+                    async for candidate in self._storage.iter_collection(
+                        project,
+                        database,
+                        selector.collection_id,
+                        all_descendants=selector.all_descendants,
+                        parent_path=parent_path,
+                    ):
+                        try:
+                            await record_read(
+                                self._storage, project, database, txn_id, candidate.path
+                            )
+                        except errors.TransactionNotFound as exc:
+                            await errors.abort_with(context, exc)
+                            return
+
             records = await run_query(self._storage, project, database, sq, parent_path)
+
+            # Filter by read_time snapshot if applicable
+            if read_time_filter is not None:
+                records = [r for r in records if r.update_time <= read_time_filter]
+
             result = aggregate(records, list(request.structured_aggregation_query.aggregations))
             response = firestore_pb2.RunAggregationQueryResponse()
             for alias, value in result.items():
@@ -559,10 +719,46 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
             await errors.abort_with(context, exc)
 
     async def BeginTransaction(self, request: Any, context: Any) -> Any:
-        await errors.abort_with(context, errors.Unimplemented("BeginTransaction"))
+        try:
+            project, database = names.parse_database_root(request.database)
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
+            return
+
+        # Parse options — default is read-write.
+        read_only = False
+        read_time: datetime | None = None
+        which_options = request.options.WhichOneof("mode") if request.HasField("options") else None
+        if which_options == "read_only":
+            read_only = True
+            ro = request.options.read_only
+            if ro.HasField("read_time"):
+                read_time = ro.read_time.ToDatetime().replace(tzinfo=UTC)
+
+        try:
+            txn = await begin_transaction(
+                self._storage,
+                project,
+                database,
+                read_only=read_only,
+                read_time=read_time,
+            )
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
+            return
+
+        return firestore_pb2.BeginTransactionResponse(transaction=txn.txn_id.encode("ascii"))
 
     async def Rollback(self, request: Any, context: Any) -> Any:
-        await errors.abort_with(context, errors.Unimplemented("Rollback"))
+        try:
+            project, database = names.parse_database_root(request.database)
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
+            return
+
+        txn_id = request.transaction.decode("ascii")
+        await rollback(self._storage, project, database, txn_id)
+        return empty_pb2.Empty()
 
     async def Listen(self, request_iterator: Any, context: Any) -> AsyncIterator[Any]:
         await errors.abort_with(context, errors.Unimplemented("Listen"))
