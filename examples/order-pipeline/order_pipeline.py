@@ -66,6 +66,7 @@ class OrderPipeline:
     def setup(self) -> None:
         """Idempotent service setup. Safe to call repeatedly."""
         self._setup_secret_manager()
+        self._setup_gcs()
 
     def _setup_secret_manager(self) -> None:
         import contextlib
@@ -102,3 +103,28 @@ class OrderPipeline:
     def _lookup_payment_key(self) -> str:
         name = f"projects/{self.project}/secrets/payment-api-key/versions/latest"
         return self._sm_client.access_secret_version(name=name).payload.data.decode("utf-8")
+
+    BUCKET_NAME = "orders"
+
+    def _setup_gcs(self) -> None:
+        import contextlib
+
+        from google.auth import credentials as ga_credentials
+        from google.cloud import storage
+        from google.cloud.exceptions import Conflict
+
+        self._gcs_client = storage.Client(
+            project=self.project,
+            credentials=ga_credentials.AnonymousCredentials(),
+        )
+        with contextlib.suppress(Conflict):
+            self._gcs_client.create_bucket(self.BUCKET_NAME)
+
+    def _upload_invoice(self, *, order_id: str, body: str) -> None:
+        bucket = self._gcs_client.bucket(self.BUCKET_NAME)
+        blob = bucket.blob(f"orders/{order_id}/invoice.txt")
+        blob.upload_from_string(body, content_type="text/plain")
+
+    def _download_invoice(self, order_id: str) -> str:
+        bucket = self._gcs_client.bucket(self.BUCKET_NAME)
+        return bucket.blob(f"orders/{order_id}/invoice.txt").download_as_text()

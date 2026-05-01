@@ -32,3 +32,12 @@ def test_pipeline_construction_blocks_until_emulator_ready(pipeline: OrderPipeli
 def test_secret_seeded(pipeline: OrderPipeline) -> None:
     # setup() in the fixture should have seeded payment-api-key.
     assert pipeline._lookup_payment_key().startswith("sk_test_")
+
+
+def test_gcs_invoice_upload(pipeline: OrderPipeline) -> None:
+    pipeline._upload_invoice(
+        order_id="test-order-001",
+        body="Invoice for test-order-001\nAmount: 99.99",
+    )
+    body = pipeline._download_invoice("test-order-001")
+    assert "Amount: 99.99" in body
