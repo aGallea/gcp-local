@@ -139,3 +139,152 @@ PY
 
 echo 'generated pubsub:'
 ls -1 "src/gcp_local/generated/google/pubsub/v1/"
+
+# Firestore v1 + admin/v1
+python -m grpc_tools.protoc \
+  --proto_path=protos \
+  --proto_path="$EXTRA_PROTO_PATH" \
+  --python_out="$OUT" \
+  --pyi_out="$OUT" \
+  --grpc_python_out="$OUT" \
+  protos/google/firestore/v1/firestore.proto \
+  protos/google/firestore/v1/document.proto \
+  protos/google/firestore/v1/query.proto \
+  protos/google/firestore/v1/write.proto \
+  protos/google/firestore/v1/common.proto \
+  protos/google/firestore/v1/aggregation_result.proto \
+  protos/google/firestore/v1/bloom_filter.proto \
+  protos/google/firestore/v1/explain_stats.proto \
+  protos/google/firestore/v1/query_profile.proto \
+  protos/google/firestore/v1/pipeline.proto \
+  protos/google/firestore/admin/v1/firestore_admin.proto \
+  protos/google/firestore/admin/v1/index.proto \
+  protos/google/firestore/admin/v1/field.proto \
+  protos/google/firestore/admin/v1/database.proto \
+  protos/google/firestore/admin/v1/operation.proto \
+  protos/google/firestore/admin/v1/backup.proto \
+  protos/google/firestore/admin/v1/realtime_updates.proto \
+  protos/google/firestore/admin/v1/schedule.proto \
+  protos/google/firestore/admin/v1/snapshot.proto \
+  protos/google/firestore/admin/v1/user_creds.proto
+
+# Rewrite imports for firestore v1 files
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/firestore/v1')
+for p in out.glob('*.py'):
+    text = p.read_text()
+    new = re.sub(
+        r'^from google\.firestore\.v1 import',
+        'from gcp_local.generated.google.firestore.v1 import',
+        text,
+        flags=re.MULTILINE,
+    )
+    if new != text:
+        p.write_text(new)
+        print(f'rewrote imports in {p}')
+PY
+
+# Rewrite imports for firestore admin/v1 files
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/firestore/admin/v1')
+for p in out.glob('*.py'):
+    text = p.read_text()
+    new = re.sub(
+        r'^from google\.firestore\.admin\.v1 import',
+        'from gcp_local.generated.google.firestore.admin.v1 import',
+        text,
+        flags=re.MULTILINE,
+    )
+    if new != text:
+        p.write_text(new)
+        print(f'rewrote imports in {p}')
+PY
+
+# Descriptor-pool collision wrapper for firestore v1 pb2 files.
+# google-cloud-firestore (dev dep used by integration tests) ships its own
+# copies of these descriptors. Without the try/except fallback the second
+# AddSerializedFile call aborts pytest collection across the suite.
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/firestore/v1')
+fallback_symbols = {
+    'firestore_pb2.py':          'google.firestore.v1.GetDocumentRequest',
+    'document_pb2.py':           'google.firestore.v1.Document',
+    'query_pb2.py':              'google.firestore.v1.StructuredQuery',
+    'write_pb2.py':              'google.firestore.v1.Write',
+    'common_pb2.py':             'google.firestore.v1.DocumentMask',
+    'aggregation_result_pb2.py': 'google.firestore.v1.AggregationResult',
+    'bloom_filter_pb2.py':       'google.firestore.v1.BloomFilter',
+    'explain_stats_pb2.py':      'google.firestore.v1.ExplainStats',
+    'query_profile_pb2.py':      'google.firestore.v1.ExplainOptions',
+    'pipeline_pb2.py':           'google.firestore.v1.StructuredPipeline',
+}
+pattern = re.compile(
+    r'^DESCRIPTOR = (_descriptor_pool\.Default\(\)\.AddSerializedFile\(.+?\))\n',
+    re.MULTILINE | re.DOTALL,
+)
+for fname, symbol in fallback_symbols.items():
+    p = out / fname
+    if not p.exists():
+        continue
+    text = p.read_text()
+    m = pattern.search(text)
+    if not m:
+        continue  # already wrapped, or shape changed
+    wrapper = (
+        f"try:\n"
+        f"  DESCRIPTOR = {m.group(1)}\n"
+        f"except TypeError:\n"
+        f"  DESCRIPTOR = _descriptor_pool.Default().FindFileContainingSymbol(\n"
+        f"    '{symbol}'\n"
+        f"  )\n"
+    )
+    p.write_text(text[:m.start()] + wrapper + text[m.end():])
+    print(f'wrapped DESCRIPTOR in {p}')
+PY
+
+# Descriptor-pool collision wrapper for firestore admin/v1 pb2 files.
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/firestore/admin/v1')
+fallback_symbols = {
+    'firestore_admin_pb2.py':    'google.firestore.admin.v1.GetIndexRequest',
+    'index_pb2.py':              'google.firestore.admin.v1.Index',
+    'field_pb2.py':              'google.firestore.admin.v1.Field',
+    'database_pb2.py':           'google.firestore.admin.v1.Database',
+    'operation_pb2.py':          'google.firestore.admin.v1.IndexOperationMetadata',
+    'backup_pb2.py':             'google.firestore.admin.v1.Backup',
+    'realtime_updates_pb2.py':   'google.firestore.admin.v1.RealtimeUpdatesMode',
+    'schedule_pb2.py':           'google.firestore.admin.v1.BackupSchedule',
+    'snapshot_pb2.py':           'google.firestore.admin.v1.PitrSnapshot',
+    'user_creds_pb2.py':         'google.firestore.admin.v1.UserCreds',
+}
+pattern = re.compile(
+    r'^DESCRIPTOR = (_descriptor_pool\.Default\(\)\.AddSerializedFile\(.+?\))\n',
+    re.MULTILINE | re.DOTALL,
+)
+for fname, symbol in fallback_symbols.items():
+    p = out / fname
+    if not p.exists():
+        continue
+    text = p.read_text()
+    m = pattern.search(text)
+    if not m:
+        continue  # already wrapped, or shape changed
+    wrapper = (
+        f"try:\n"
+        f"  DESCRIPTOR = {m.group(1)}\n"
+        f"except TypeError:\n"
+        f"  DESCRIPTOR = _descriptor_pool.Default().FindFileContainingSymbol(\n"
+        f"    '{symbol}'\n"
+        f"  )\n"
+    )
+    p.write_text(text[:m.start()] + wrapper + text[m.end():])
+    print(f'wrapped DESCRIPTOR in {p}')
+PY
+
+echo 'generated firestore:'
+ls -1 "src/gcp_local/generated/google/firestore/v1/"
+ls -1 "src/gcp_local/generated/google/firestore/admin/v1/"
