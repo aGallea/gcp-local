@@ -13,6 +13,7 @@ This guide covers running `gcp-local` via Docker, docker-compose, and Kubernetes
 | BigQuery        | 9050 | REST; client honors `BIGQUERY_EMULATOR_HOST` |
 | Secret Manager  | 8086 | gRPC; no standard env var (use `client_options.api_endpoint`) |
 | Pub/Sub         | 8085 | gRPC; client honors `PUBSUB_EMULATOR_HOST` |
+| Firestore       | 8080 | gRPC; client honors `FIRESTORE_EMULATOR_HOST` |
 
 ## Building the image
 

@@ -9,7 +9,7 @@ A local emulator for Google Cloud services — the GCP counterpart to LocalStack
 
 ## Status
 
-Alpha. Four services are implemented today; one more is planned for v1; see [ROADMAP.md](ROADMAP.md) for what's ahead.
+Alpha. Five services are implemented today; v1 is feature-complete. See [ROADMAP.md](ROADMAP.md) for per-service follow-ups and post-v1 plans.
 
 ## Services at a glance
 
@@ -19,7 +19,7 @@ Alpha. Four services are implemented today; one more is planned for v1; see [ROA
 | GCS | Alpha | 4443 | REST | [usage](docs/services/gcs.md) | [internals](docs/architecture/gcs.md) |
 | Secret Manager | Alpha | 8086 | gRPC | [usage](docs/services/secret-manager.md) | [internals](docs/architecture/secret-manager.md) |
 | Pub/Sub | Alpha | 8085 | gRPC | [usage](docs/services/pubsub.md) | [internals](docs/architecture/pubsub.md) |
-| Firestore | Planned | (TBD) | gRPC | — | — |
+| Firestore | Alpha | 8080 | gRPC | [usage](docs/services/firestore.md) | [internals](docs/architecture/firestore.md) |
 
 Status vocabulary: **Stable** = feature-complete for v1, **Alpha** = implemented and in use but may shift, **Planned** = committed to v1 but not started, **Future** = post-v1.
 
@@ -46,7 +46,7 @@ curl http://localhost:4510/_emulator/health
 Pre-built images are published to GitHub Container Registry on every push to `master` and on every `v*` tag:
 
 ```bash
-docker run --rm -p 4510:4510 -p 4443:4443 -p 8086:8086 -p 9050:9050 ghcr.io/agallea/gcp-local:latest
+docker run --rm -p 4510:4510 -p 4443:4443 -p 8080:8080 -p 8086:8086 -p 9050:9050 ghcr.io/agallea/gcp-local:latest
 curl http://localhost:4510/_emulator/health
 ```
 
@@ -56,7 +56,7 @@ To build the image locally instead:
 
 ```bash
 docker build -f docker/Dockerfile -t gcp-local:dev .
-docker run --rm -p 4510:4510 -p 4443:4443 -p 8086:8086 -p 9050:9050 gcp-local:dev
+docker run --rm -p 4510:4510 -p 4443:4443 -p 8080:8080 -p 8086:8086 -p 9050:9050 gcp-local:dev
 curl http://localhost:4510/_emulator/health
 ```
 
@@ -135,7 +135,7 @@ print(
 
 ## Documentation map
 
-- **Use a service** — [`docs/services/`](docs/services/) (one file per service: BigQuery, GCS, Secret Manager, Pub/Sub).
+- **Use a service** — [`docs/services/`](docs/services/) (one file per service: BigQuery, GCS, Secret Manager, Pub/Sub, Firestore).
 - **Run / deploy** — [`docs/deployment.md`](docs/deployment.md).
 - **Architecture & internals** — [`docs/architecture/overview.md`](docs/architecture/overview.md) and the per-service files alongside it.
 - **Roadmap** — [`ROADMAP.md`](ROADMAP.md).

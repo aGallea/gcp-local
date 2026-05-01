@@ -1,6 +1,6 @@
 # Roadmap
 
-This document tracks what's actively being built, what's committed to v1, and what's likely post-v1. Implemented services live in the [README](README.md#services-at-a-glance) table; this file is forward-looking.
+This document tracks per-service follow-ups and post-v1 work. All five v1 services (BigQuery, GCS, Secret Manager, Pub/Sub, Firestore) are now implemented; the [README](README.md#services-at-a-glance) table lists them with links. This file is forward-looking.
 
 Status vocabulary:
 
@@ -18,11 +18,7 @@ Status vocabulary:
 
 ## Planned (v1)
 
-These services are committed to the v1 roadmap. The order is rough; pick whichever you'd like to contribute.
-
-| Service | Wire | Default port | Default env var | Notes |
-|---|---|---|---|---|
-| Firestore | gRPC | (TBD) | `FIRESTORE_EMULATOR_HOST` | Documents, queries, indexes |
+All v1 services are now implemented. See the [README](README.md#services-at-a-glance) table for the full list.
 
 ## Future (post-v1)
 
@@ -58,6 +54,16 @@ See the "What's not emulated" section of [`docs/services/gcs.md`](docs/services/
 - **CMEK** — accepted, not enforced.
 - **Rotation schedules** — not implemented.
 - **Audit logging** — not emitted.
+
+### Firestore
+
+- **Listen** — streaming RPC for real-time `on_snapshot()` callbacks. The `firestore.document.written` StateHub event is already emitted on every write; Listen only needs to subscribe to it.
+- **Security rules** — `firestore.rules` engine; currently every request is authorized.
+- **Composite-index enforcement** — queries currently run regardless of whether a matching index exists; real Firestore returns `FAILED_PRECONDITION` with an index-creation link when an index is missing.
+- **Exports / imports / backups** — `FirestoreAdmin.ExportDocuments`, `ImportDocuments`, and all `*Backup*` RPCs currently return `UNIMPLEMENTED`.
+- **PartitionQuery** — used by Dataflow and parallel export jobs; currently returns `UNIMPLEMENTED`.
+- **Document-history retention** — read-only transactions with `read_time` in the past always see current document state; real Firestore retains a 1-hour history window.
+- **Field admin** — `FirestoreAdmin.UpdateField` for TTL field policies and other field-level configuration; currently returns `UNIMPLEMENTED`.
 
 ### Pub/Sub
 
