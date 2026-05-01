@@ -206,6 +206,7 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
                 version=version,
             )
             await self._storage.put_document(rec)
+            await self._storage.snapshot(project, database)
             return _doc_to_proto(rec)
         except errors.FirestoreError as exc:
             await errors.abort_with(context, exc)
@@ -267,6 +268,7 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
                 version=version,
             )
             await self._storage.put_document(rec)
+            await self._storage.snapshot(project, database)
             return _doc_to_proto(rec)
         except errors.FirestoreError as exc:
             await errors.abort_with(context, exc)
@@ -290,6 +292,7 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
                 _check_precondition(existing, request.current_document)
 
             await self._storage.delete_document(project, database, path)
+            await self._storage.snapshot(project, database)
             return empty_pb2.Empty()
         except errors.FirestoreError as exc:
             await errors.abort_with(context, exc)

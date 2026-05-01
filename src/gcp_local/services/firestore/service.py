@@ -15,7 +15,7 @@ from gcp_local.services.firestore.servicer import (
     FirestoreAdminServicer,
     FirestoreServicer,
 )
-from gcp_local.services.firestore.storage import FirestoreStorage, InMemoryStorage
+from gcp_local.services.firestore.storage import FirestoreStorage, InMemoryStorage, JsonDiskStorage
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +35,10 @@ class FirestoreService:
         self._sweeper: TransactionTtlSweeper | None = None
 
     async def start(self, ctx: Context) -> None:
-        # JsonDiskStorage wiring lands in a later task; for now use InMemoryStorage
-        # always. Persistence is opt-in via PERSIST=1 once Task 14 lands.
-        self._storage = InMemoryStorage()
+        if ctx.persist:
+            self._storage = JsonDiskStorage(state_dir=ctx.data_dir)
+        else:
+            self._storage = InMemoryStorage()
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._server = grpc.aio.server()
         self._server.add_insecure_port(f"[::]:{port}")

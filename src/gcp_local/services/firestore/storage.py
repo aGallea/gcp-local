@@ -1,8 +1,15 @@
-"""Firestore storage. In-memory implementation; JSON-on-disk lands in Task 14."""
+"""Firestore storage — in-memory and JSON-on-disk implementations."""
+
+from __future__ import annotations
 
 import asyncio
+import base64
+import json
+import math
 from collections.abc import AsyncIterator
-from typing import Protocol
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Protocol
 
 from gcp_local.services.firestore.errors import DocumentNotFound
 from gcp_local.services.firestore.models import DocumentRecord, IndexRecord, TransactionRecord
@@ -25,7 +32,7 @@ class FirestoreStorage(Protocol):
         all_descendants: bool,
         parent_path: str = "",
     ) -> AsyncIterator[DocumentRecord]: ...
-    def lock(self, project: str, database: str) -> "asyncio.Lock": ...
+    def lock(self, project: str, database: str) -> asyncio.Lock: ...
     async def snapshot(
         self, project: str, database: str
     ) -> None: ...  # no-op for InMemory; fsync for JsonDisk (Task 14)
@@ -145,4 +152,205 @@ class InMemoryStorage:
         self._indexes.pop((project, database, name), None)
 
     async def snapshot(self, project: str, database: str) -> None:
-        return None  # in-memory only; JsonDiskStorage in Task 14 overrides this
+        return None  # in-memory only; JsonDiskStorage overrides this
+
+
+# ---------------------------------------------------------------------------
+# JSON codec helpers
+# ---------------------------------------------------------------------------
+
+_SCHEMA_VERSION = 1
+
+
+def _encode_value(v: Any) -> Any:
+    """Encode a Python Firestore value to a JSON-safe form."""
+    from gcp_local.services.firestore.values import DocumentReference, GeoPoint
+
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        if math.isnan(v):
+            return {"__nan__": True}
+        if math.isinf(v):
+            return {"__inf__": "+" if v > 0 else "-"}
+        return v
+    if isinstance(v, str):
+        return v
+    if isinstance(v, bytes):
+        return {"__bytes__": base64.b64encode(v).decode("ascii")}
+    if isinstance(v, datetime):
+        dt = v if v.tzinfo is not None else v.replace(tzinfo=UTC)
+        return {"__datetime__": dt.isoformat()}
+    if isinstance(v, DocumentReference):
+        return {"__ref__": v.to_resource_name()}
+    if isinstance(v, GeoPoint):
+        return {"__geopoint__": [v.lat, v.lng]}
+    if isinstance(v, list):
+        return [_encode_value(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _encode_value(vv) for k, vv in v.items()}
+    raise TypeError(f"cannot encode Firestore value of type {type(v).__name__!r}")
+
+
+def _decode_value(v: Any) -> Any:
+    """Decode a JSON value back to a Python Firestore value."""
+    from gcp_local.services.firestore.values import DocumentReference, GeoPoint
+
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return v
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        return [_decode_value(x) for x in v]
+    if isinstance(v, dict):
+        if "__nan__" in v:
+            return float("nan")
+        if "__inf__" in v:
+            return float("inf") if v["__inf__"] == "+" else float("-inf")
+        if "__bytes__" in v:
+            return base64.b64decode(v["__bytes__"])
+        if "__datetime__" in v:
+            return datetime.fromisoformat(v["__datetime__"])
+        if "__ref__" in v:
+            return DocumentReference.from_resource_name(v["__ref__"])
+        if "__geopoint__" in v:
+            lat, lng = v["__geopoint__"]
+            return GeoPoint(lat=lat, lng=lng)
+        # Plain map (dict with string keys)
+        return {k: _decode_value(vv) for k, vv in v.items()}
+    raise TypeError(f"cannot decode JSON value of type {type(v).__name__!r}")
+
+
+def _filename_for(project: str, database: str) -> str:
+    """Produce the .json filename for a (project, database) pair."""
+    return f"{project}__{database}.json"
+
+
+def _parse_filename(stem: str) -> tuple[str, str]:
+    """Parse a stem like 'my-project__(default)' → ('my-project', '(default)').
+
+    The project is everything before the last '__'; the database is everything
+    after.  Both may contain hyphens; neither may contain '__'.
+    """
+    idx = stem.rfind("__")
+    if idx == -1:
+        raise ValueError(f"cannot parse Firestore state filename stem: {stem!r}")
+    return stem[:idx], stem[idx + 2 :]
+
+
+# ---------------------------------------------------------------------------
+# JsonDiskStorage
+# ---------------------------------------------------------------------------
+
+
+class JsonDiskStorage(InMemoryStorage):
+    """Persistent Firestore storage backed by per-database JSON files.
+
+    On startup all existing snapshots are loaded into memory.  Each call to
+    ``snapshot(project, database)`` atomically overwrites the corresponding
+    file so that process restarts replay the latest committed state.
+    """
+
+    def __init__(self, state_dir: Path | str) -> None:
+        super().__init__()
+        self._state_dir = Path(state_dir) / "firestore"
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._load_all()
+
+    # ------------------------------------------------------------------
+    # Load
+    # ------------------------------------------------------------------
+
+    def _load_all(self) -> None:
+        for p in self._state_dir.glob("*.json"):
+            try:
+                project, database = _parse_filename(p.stem)
+            except ValueError:
+                continue  # skip files that don't match the naming convention
+            self._load_file(p, project, database)
+
+    def _load_file(self, path: Path, project: str, database: str) -> None:
+        body = json.loads(path.read_text(encoding="utf-8"))
+        sv = body.get("schema_version")
+        if sv != _SCHEMA_VERSION:
+            raise ValueError(
+                f"unsupported Firestore state file schema version {sv!r} "
+                f"(expected {_SCHEMA_VERSION}) in {path}"
+            )
+
+        db_key = (project, database)
+
+        # Documents
+        docs_raw: dict[str, Any] = body.get("documents", {})
+        for doc_path, raw in docs_raw.items():
+            fields = {k: _decode_value(v) for k, v in raw["fields"].items()}
+            rec = DocumentRecord(
+                project=project,
+                database=database,
+                path=doc_path,
+                fields=fields,
+                create_time=datetime.fromisoformat(raw["create_time"]),
+                update_time=datetime.fromisoformat(raw["update_time"]),
+                version=int(raw["version"]),
+            )
+            self._documents.setdefault(db_key, {})[doc_path] = rec
+
+        # Recompute version counter from max(record.version)
+        bucket = self._documents.get(db_key, {})
+        if bucket:
+            self._versions[db_key] = max(r.version for r in bucket.values())
+        else:
+            self._versions.setdefault(db_key, 0)
+
+        # Indexes
+        for idx_raw in body.get("indexes", []):
+            rec_idx = IndexRecord(
+                name=idx_raw["name"],
+                fields=idx_raw.get("fields", []),
+                state=idx_raw.get("state", "READY"),
+            )
+            self._indexes[(project, database, rec_idx.name)] = rec_idx
+
+    # ------------------------------------------------------------------
+    # Snapshot (atomic write)
+    # ------------------------------------------------------------------
+
+    async def snapshot(self, project: str, database: str) -> None:
+        db_key = (project, database)
+        bucket = self._documents.get(db_key, {})
+
+        documents_out: dict[str, Any] = {}
+        for doc_path, rec in bucket.items():
+            documents_out[doc_path] = {
+                "fields": {k: _encode_value(v) for k, v in rec.fields.items()},
+                "create_time": rec.create_time.isoformat(),
+                "update_time": rec.update_time.isoformat(),
+                "version": rec.version,
+            }
+
+        indexes_out: list[dict[str, Any]] = [
+            {"name": idx.name, "fields": idx.fields, "state": idx.state}
+            for (p, d, _n), idx in self._indexes.items()
+            if p == project and d == database
+        ]
+
+        body = {
+            "schema_version": _SCHEMA_VERSION,
+            "documents": documents_out,
+            "indexes": indexes_out,
+        }
+
+        target = self._state_dir / _filename_for(project, database)
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(json.dumps(body, indent=2), encoding="utf-8")
+        tmp.replace(target)
