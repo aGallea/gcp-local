@@ -13,6 +13,8 @@ class DocumentNotFound(FirestoreError):
     pass
 
 
+# Reserved per spec §8 error table; no current call site raises it because
+# collections come into existence implicitly with their first document.
 class CollectionNotFound(FirestoreError):
     pass
 

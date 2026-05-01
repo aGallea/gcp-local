@@ -23,6 +23,12 @@ class TestParseDatabaseRoot:
     def test_rejects_garbage(self):
         with pytest.raises(InvalidName):
             parse_database_root("nope")
+
+    def test_rejects_empty_project(self):
+        with pytest.raises(InvalidName):
+            parse_database_root("projects//databases/db")
+
+    def test_rejects_empty_database(self):
         with pytest.raises(InvalidName):
             parse_database_root("projects/p/databases/")
 
