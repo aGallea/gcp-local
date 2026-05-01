@@ -1,8 +1,9 @@
-"""Firestore gRPC servicers — document CRUD RPCs (Task 6)."""
+"""Firestore gRPC servicers — document CRUD + query RPCs."""
 
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -21,6 +22,8 @@ from gcp_local.generated.google.firestore.v1 import (
     write_pb2,
 )
 from gcp_local.services.firestore import errors, names
+from gcp_local.services.firestore.engine.aggregations import aggregate
+from gcp_local.services.firestore.engine.query import run_query
 from gcp_local.services.firestore.engine.transforms import apply_transform
 from gcp_local.services.firestore.models import DocumentRecord
 from gcp_local.services.firestore.storage import FirestoreStorage
@@ -77,6 +80,22 @@ def _check_precondition(rec: DocumentRecord | None, precondition: Any) -> None:
             raise errors.FailedPrecondition("update_time mismatch")
 
 
+def _parse_run_query_parent(parent: str) -> tuple[str, str, str]:
+    """Parse a RunQuery / RunAggregationQuery parent resource name.
+
+    Accepted forms:
+      projects/<p>/databases/<db>/documents           → parent_path = ""
+      projects/<p>/databases/<db>/documents/<path>    → parent_path = <path>
+
+    Returns (project, database, parent_path).
+    Raises InvalidName for malformed strings.
+    """
+    m = re.match(r"^projects/([^/]+)/databases/([^/]+)/documents(?:/(.+))?$", parent)
+    if not m:
+        raise errors.InvalidName(f"invalid RunQuery parent: {parent!r}")
+    return m.group(1), m.group(2), m.group(3) or ""
+
+
 def _parse_parent_for_list(parent: str) -> tuple[str, str, str]:
     """Parse a ListDocuments/ListCollectionIds parent into (project, database, doc_path).
 
@@ -84,8 +103,6 @@ def _parse_parent_for_list(parent: str) -> tuple[str, str, str]:
       projects/<p>/databases/<db>/documents            -> doc_path = ""
       projects/<p>/databases/<db>/documents/<path>     -> doc_path = <path>
     """
-    import re
-
     m = re.match(r"^projects/([^/]+)/databases/([^/]+)/documents(?:/(.+))?$", parent)
     if not m:
         raise errors.InvalidName(f"invalid parent: {parent!r}")
@@ -513,14 +530,33 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
         )
 
     async def RunQuery(self, request: Any, context: Any) -> AsyncIterator[Any]:
-        await errors.abort_with(context, errors.Unimplemented("RunQuery"))
-        return
-        yield  # make this an async generator
+        try:
+            project, database, parent_path = _parse_run_query_parent(request.parent)
+            records = await run_query(
+                self._storage, project, database, request.structured_query, parent_path
+            )
+            for rec in records:
+                yield firestore_pb2.RunQueryResponse(document=_doc_to_proto(rec))
+            # Final empty response with read_time signals end-of-stream.
+            end = firestore_pb2.RunQueryResponse()
+            end.read_time.FromDatetime(_now())
+            yield end
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
 
     async def RunAggregationQuery(self, request: Any, context: Any) -> AsyncIterator[Any]:
-        await errors.abort_with(context, errors.Unimplemented("RunAggregationQuery"))
-        return
-        yield
+        try:
+            project, database, parent_path = _parse_run_query_parent(request.parent)
+            sq = request.structured_aggregation_query.structured_query
+            records = await run_query(self._storage, project, database, sq, parent_path)
+            result = aggregate(records, list(request.structured_aggregation_query.aggregations))
+            response = firestore_pb2.RunAggregationQueryResponse()
+            for alias, value in result.items():
+                response.result.aggregate_fields[alias].CopyFrom(to_proto(value))
+            response.read_time.FromDatetime(_now())
+            yield response
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
 
     async def BeginTransaction(self, request: Any, context: Any) -> Any:
         await errors.abort_with(context, errors.Unimplemented("BeginTransaction"))
