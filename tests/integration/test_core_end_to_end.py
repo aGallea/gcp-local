@@ -10,7 +10,13 @@ async def test_health_reports_all_services_healthy(emulator):
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert set(body["services"].keys()) == {"gcs", "secret_manager", "bigquery", "pubsub", "firestore"}
+    assert set(body["services"].keys()) == {
+        "gcs",
+        "secret_manager",
+        "bigquery",
+        "pubsub",
+        "firestore",
+    }
     assert body["services"]["gcs"]["ok"] is True
     assert body["services"]["secret_manager"]["ok"] is True
     assert body["services"]["bigquery"]["ok"] is True
