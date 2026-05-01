@@ -43,6 +43,17 @@ curl http://localhost:4510/_emulator/health
 
 ### Run via Docker
 
+Pre-built images are published to GitHub Container Registry on every push to `master` and on every `v*` tag:
+
+```bash
+docker run --rm -p 4510:4510 -p 4443:4443 -p 8086:8086 -p 9050:9050 ghcr.io/agallea/gcp-local:latest
+curl http://localhost:4510/_emulator/health
+```
+
+Available tags: `latest` (master tip), `master-<short-sha>` (specific master commit), `vX.Y.Z` / `vX.Y` (release tags). Multi-arch: `linux/amd64`, `linux/arm64`.
+
+To build the image locally instead:
+
 ```bash
 docker build -f docker/Dockerfile -t gcp-local:dev .
 docker run --rm -p 4510:4510 -p 4443:4443 -p 8086:8086 -p 9050:9050 gcp-local:dev
