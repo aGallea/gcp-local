@@ -292,11 +292,9 @@ async def run_query(
     Pipeline:
       candidates → filter → orderBy → cursors → offset → limit → return
     """
-    # proto-plus wraps "from" → "from_"; our generated pb2 uses "from".
-    # Wire-deserialized objects expose "from_"; objects constructed directly
-    # (e.g. in unit tests via **{"from": [...]}) expose "from".
-    from_selectors = getattr(structured_query, "from_", None) or getattr(
-        structured_query, "from", []
+    # Proto-plus (google-cloud-firestore) renames "from" → "from_"; raw pb2 keeps "from".
+    from_selectors = list(
+        getattr(structured_query, "from_", None) or getattr(structured_query, "from", [])
     )
     if not from_selectors:
         return []

@@ -695,8 +695,8 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
 
             # Track full scanned set in the read_set (Firestore semantics).
             if txn_id is not None:
-                # proto-plus wraps "from" → "from_"; our generated pb2 uses "from".
-                from_selectors = getattr(sq, "from_", None) or getattr(sq, "from", [])
+                # Proto-plus (google-cloud-firestore) renames "from" → "from_"; raw pb2 keeps "from".
+                from_selectors = list(getattr(sq, "from_", None) or getattr(sq, "from", []))
                 if from_selectors:
                     selector = from_selectors[0]
                     async for candidate in self._storage.iter_collection(
