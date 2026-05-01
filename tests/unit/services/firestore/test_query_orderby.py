@@ -8,6 +8,7 @@ from gcp_local.services.firestore.engine.query import run_query
 from gcp_local.services.firestore.models import DocumentRecord
 from gcp_local.services.firestore.storage import InMemoryStorage
 from gcp_local.services.firestore.values import to_proto
+from tests.unit.services.firestore._query_helpers import set_from
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -57,7 +58,7 @@ def _make_query(
     sel = query_pb2.StructuredQuery.CollectionSelector(
         collection_id=collection_id, all_descendants=all_descendants
     )
-    (getattr(q, "from", None) or q.from_).append(sel)
+    set_from(q, [sel])
     if order_by:
         q.order_by.extend(order_by)
     if where is not None:

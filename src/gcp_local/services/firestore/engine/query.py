@@ -11,6 +11,27 @@ from gcp_local.services.firestore.values import DocumentReference, compare, from
 
 _MISSING = object()
 
+
+def _from_selectors(
+    structured_query: query_pb2.StructuredQuery,
+) -> list[query_pb2.StructuredQuery.CollectionSelector]:
+    """Return the StructuredQuery.from list, robust to attribute-naming
+    differences between protobuf versions and proto-plus contamination.
+
+    Some protobuf runtimes expose the (reserved-word) ``from`` field as
+    ``from``; others rename it to ``from_``.  Either form may raise
+    ``AttributeError`` or ``ValueError`` on the wrong runtime, so we try
+    both inside a guard.
+    """
+    for name in ("from_", "from"):
+        try:
+            value = getattr(structured_query, name)
+        except (AttributeError, ValueError):
+            continue
+        return list(value)
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Inequality operators — used to detect implicit orderBy fields
 # ---------------------------------------------------------------------------
@@ -292,8 +313,7 @@ async def run_query(
     Pipeline:
       candidates → filter → orderBy → cursors → offset → limit → return
     """
-    # getattr("from") for raw pb2; from_ for proto-plus wrapped
-    from_selectors = list(getattr(structured_query, "from", None) or structured_query.from_)
+    from_selectors = _from_selectors(structured_query)
     if not from_selectors:
         return []
 

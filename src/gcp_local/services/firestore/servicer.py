@@ -23,7 +23,7 @@ from gcp_local.generated.google.firestore.v1 import (
 )
 from gcp_local.services.firestore import errors, names
 from gcp_local.services.firestore.engine.aggregations import aggregate
-from gcp_local.services.firestore.engine.query import run_query
+from gcp_local.services.firestore.engine.query import _from_selectors, run_query
 from gcp_local.services.firestore.engine.transactions import (
     begin_transaction,
     commit_transaction,
@@ -635,10 +635,7 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):
             if txn_id is not None:
                 # Collect all candidate paths (the full scanned set per Firestore
                 # semantics) and register them into the read_set.
-                # proto-plus wraps "from" → "from_"; our generated pb2 uses "from".
-                from_selectors = getattr(request.structured_query, "from_", None) or getattr(
-                    request.structured_query, "from", []
-                )
+                from_selectors = _from_selectors(request.structured_query)
                 if from_selectors:
                     selector = from_selectors[0]
                     async for candidate in self._storage.iter_collection(
@@ -695,8 +692,7 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):
 
             # Track full scanned set in the read_set (Firestore semantics).
             if txn_id is not None:
-                # getattr("from") for raw pb2; from_ for proto-plus wrapped
-                from_selectors = list(getattr(sq, "from", None) or sq.from_)
+                from_selectors = _from_selectors(sq)
                 if from_selectors:
                     selector = from_selectors[0]
                     async for candidate in self._storage.iter_collection(

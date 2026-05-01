@@ -7,6 +7,7 @@ from gcp_local.generated.google.firestore.v1 import query_pb2
 from gcp_local.services.firestore.engine.query import run_query
 from gcp_local.services.firestore.models import DocumentRecord
 from gcp_local.services.firestore.storage import InMemoryStorage
+from tests.unit.services.firestore._query_helpers import set_from
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,7 +41,7 @@ def _cg_query(collection_id: str) -> query_pb2.StructuredQuery:
     sel = query_pb2.StructuredQuery.CollectionSelector(
         collection_id=collection_id, all_descendants=True
     )
-    (getattr(q, "from", None) or q.from_).append(sel)
+    set_from(q, [sel])
     return q
 
 
@@ -50,7 +51,7 @@ def _shallow_query(collection_id: str) -> query_pb2.StructuredQuery:
     sel = query_pb2.StructuredQuery.CollectionSelector(
         collection_id=collection_id, all_descendants=False
     )
-    (getattr(q, "from", None) or q.from_).append(sel)
+    set_from(q, [sel])
     return q
 
 
