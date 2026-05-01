@@ -65,7 +65,7 @@ def _make_query(
     sel = query_pb2.StructuredQuery.CollectionSelector(
         collection_id=collection_id, all_descendants=False
     )
-    getattr(q, "from").append(sel)
+    (getattr(q, "from", None) or q.from_).append(sel)
     if order_by:
         q.order_by.extend(order_by)
     if start_at is not None:

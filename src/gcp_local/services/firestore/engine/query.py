@@ -292,10 +292,8 @@ async def run_query(
     Pipeline:
       candidates → filter → orderBy → cursors → offset → limit → return
     """
-    # Proto-plus (google-cloud-firestore) renames "from" → "from_"; raw pb2 keeps "from".
-    from_selectors = list(
-        getattr(structured_query, "from_", None) or getattr(structured_query, "from", [])
-    )
+    # getattr("from") for raw pb2; from_ for proto-plus wrapped
+    from_selectors = list(getattr(structured_query, "from", None) or structured_query.from_)
     if not from_selectors:
         return []
 

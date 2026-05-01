@@ -40,7 +40,7 @@ def _cg_query(collection_id: str) -> query_pb2.StructuredQuery:
     sel = query_pb2.StructuredQuery.CollectionSelector(
         collection_id=collection_id, all_descendants=True
     )
-    getattr(q, "from").append(sel)
+    (getattr(q, "from", None) or q.from_).append(sel)
     return q
 
 
@@ -50,7 +50,7 @@ def _shallow_query(collection_id: str) -> query_pb2.StructuredQuery:
     sel = query_pb2.StructuredQuery.CollectionSelector(
         collection_id=collection_id, all_descendants=False
     )
-    getattr(q, "from").append(sel)
+    (getattr(q, "from", None) or q.from_).append(sel)
     return q
 
 

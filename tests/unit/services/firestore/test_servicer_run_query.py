@@ -109,8 +109,9 @@ async def test_run_query_returns_all_documents() -> None:
     for i in range(3):
         await _create(servicer, "users", f"doc{i}", name=_str_val(f"user{i}"))
 
-    sq = query_pb2.StructuredQuery(
-        **{"from": [query_pb2.StructuredQuery.CollectionSelector(collection_id="users")]}
+    sq = query_pb2.StructuredQuery()
+    (getattr(sq, "from", None) or sq.from_).extend(
+        [query_pb2.StructuredQuery.CollectionSelector(collection_id="users")]
     )
     req = firestore_pb2.RunQueryRequest(parent=DOC_ROOT, structured_query=sq)
     responses = await _collect_run_query(servicer, req)
@@ -137,9 +138,9 @@ async def test_run_query_with_where_filter_returns_matching_docs() -> None:
         value=document_pb2.Value(string_value="active"),
     )
     where = query_pb2.StructuredQuery.Filter(field_filter=field_filter)
-    sq = query_pb2.StructuredQuery(
-        **{"from": [query_pb2.StructuredQuery.CollectionSelector(collection_id="items")]},
-        where=where,
+    sq = query_pb2.StructuredQuery(where=where)
+    (getattr(sq, "from", None) or sq.from_).extend(
+        [query_pb2.StructuredQuery.CollectionSelector(collection_id="items")]
     )
     req = firestore_pb2.RunQueryRequest(parent=DOC_ROOT, structured_query=sq)
     responses = await _collect_run_query(servicer, req)
@@ -153,8 +154,9 @@ async def test_run_query_with_where_filter_returns_matching_docs() -> None:
 @pytest.mark.asyncio
 async def test_run_query_on_empty_collection_returns_only_read_time() -> None:
     servicer, _ = _make_servicer()
-    sq = query_pb2.StructuredQuery(
-        **{"from": [query_pb2.StructuredQuery.CollectionSelector(collection_id="empty")]}
+    sq = query_pb2.StructuredQuery()
+    (getattr(sq, "from", None) or sq.from_).extend(
+        [query_pb2.StructuredQuery.CollectionSelector(collection_id="empty")]
     )
     req = firestore_pb2.RunQueryRequest(parent=DOC_ROOT, structured_query=sq)
     responses = await _collect_run_query(servicer, req)
@@ -190,8 +192,9 @@ async def test_run_aggregation_query_count_all_docs() -> None:
     for i in range(5):
         await _create(servicer, "items", f"doc{i}", x=_int_val(i))
 
-    sq = query_pb2.StructuredQuery(
-        **{"from": [query_pb2.StructuredQuery.CollectionSelector(collection_id="items")]}
+    sq = query_pb2.StructuredQuery()
+    (getattr(sq, "from", None) or sq.from_).extend(
+        [query_pb2.StructuredQuery.CollectionSelector(collection_id="items")]
     )
     saq = query_pb2.StructuredAggregationQuery(
         structured_query=sq,
@@ -220,9 +223,9 @@ async def test_run_aggregation_query_count_with_where_filter() -> None:
         value=document_pb2.Value(boolean_value=True),
     )
     where = query_pb2.StructuredQuery.Filter(field_filter=field_filter)
-    sq = query_pb2.StructuredQuery(
-        **{"from": [query_pb2.StructuredQuery.CollectionSelector(collection_id="items")]},
-        where=where,
+    sq = query_pb2.StructuredQuery(where=where)
+    (getattr(sq, "from", None) or sq.from_).extend(
+        [query_pb2.StructuredQuery.CollectionSelector(collection_id="items")]
     )
     saq = query_pb2.StructuredAggregationQuery(
         structured_query=sq,
@@ -243,8 +246,9 @@ async def test_run_aggregation_query_sum_field() -> None:
     for score in [10, 20, 30]:
         await _create(servicer, "scores", f"doc_{score}", score=_int_val(score))
 
-    sq = query_pb2.StructuredQuery(
-        **{"from": [query_pb2.StructuredQuery.CollectionSelector(collection_id="scores")]}
+    sq = query_pb2.StructuredQuery()
+    (getattr(sq, "from", None) or sq.from_).extend(
+        [query_pb2.StructuredQuery.CollectionSelector(collection_id="scores")]
     )
     saq = query_pb2.StructuredAggregationQuery(
         structured_query=sq,

@@ -52,12 +52,12 @@ def _make_query(
     order_by: list | None = None,
     where: query_pb2.StructuredQuery.Filter | None = None,
 ) -> query_pb2.StructuredQuery:
-    """Build a StructuredQuery. Uses getattr to set the 'from' field (Python reserved word)."""
+    """Build a StructuredQuery."""
     q = query_pb2.StructuredQuery()
     sel = query_pb2.StructuredQuery.CollectionSelector(
         collection_id=collection_id, all_descendants=all_descendants
     )
-    getattr(q, "from").append(sel)
+    (getattr(q, "from", None) or q.from_).append(sel)
     if order_by:
         q.order_by.extend(order_by)
     if where is not None:
