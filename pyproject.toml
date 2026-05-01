@@ -77,5 +77,5 @@ mypy_path = "src"
 exclude = ["src/gcp_local/generated/"]
 
 [[tool.mypy.overrides]]
-module = ["google.protobuf.*"]
+module = ["google.protobuf.*", "google.type.*", "google.rpc.*", "google.longrunning.*"]
 ignore_missing_imports = true

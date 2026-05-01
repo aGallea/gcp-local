@@ -16,6 +16,7 @@ Within-type rules:
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from google.protobuf import timestamp_pb2
 from google.type import latlng_pb2
@@ -63,7 +64,7 @@ _TYPE_ORDER = {
 }
 
 
-def _kind(py: object) -> str:
+def _kind(py: Any) -> str:
     if py is None:
         return "null_value"
     if isinstance(py, bool):
@@ -87,7 +88,7 @@ def _kind(py: object) -> str:
     raise TypeError(f"unsupported value type: {type(py).__name__}")
 
 
-def to_proto(py: object) -> document_pb2.Value:
+def to_proto(py: Any) -> document_pb2.Value:
     k = _kind(py)
     if k == "null_value":
         return document_pb2.Value(null_value=0)
@@ -124,7 +125,7 @@ def to_proto(py: object) -> document_pb2.Value:
     raise AssertionError(f"unhandled kind {k}")
 
 
-def from_proto(value: document_pb2.Value) -> object:
+def from_proto(value: document_pb2.Value) -> Any:
     which = value.WhichOneof("value_type")
     if which is None or which == "null_value":
         return None
@@ -152,11 +153,11 @@ def from_proto(value: document_pb2.Value) -> object:
     raise AssertionError(f"unknown value kind {which}")
 
 
-def _bucket(py: object) -> int:
+def _bucket(py: Any) -> int:
     return _TYPE_ORDER[_kind(py)]
 
 
-def compare(a: object, b: object) -> int:
+def compare(a: Any, b: Any) -> int:
     """Total order matching Firestore's documented type ordering."""
     ba, bb = _bucket(a), _bucket(b)
     if ba != bb:
@@ -165,7 +166,8 @@ def compare(a: object, b: object) -> int:
     if a is None and b is None:
         return 0
     if isinstance(a, bool):
-        return (a > b) - (a < b)
+        b_bool = bool(b)
+        return int(a > b_bool) - int(a < b_bool)
     if isinstance(a, (int, float)):
         a_nan = isinstance(a, float) and math.isnan(a)
         b_nan = isinstance(b, float) and math.isnan(b)
@@ -175,37 +177,40 @@ def compare(a: object, b: object) -> int:
             return -1
         if b_nan:
             return 1
-        return (float(a) > float(b)) - (float(a) < float(b))
+        fa, fb = float(a), float(b)
+        return int(fa > fb) - int(fa < fb)
     if isinstance(a, datetime):
-        return (a > b) - (a < b)
+        assert isinstance(b, datetime)
+        return int(a > b) - int(a < b)
     if isinstance(a, str):
-        ab, bb_ = a.encode("utf-8"), b.encode("utf-8")
-        return (ab > bb_) - (ab < bb_)
+        ab, bb_ = a.encode("utf-8"), str(b).encode("utf-8")
+        return int(ab > bb_) - int(ab < bb_)
     if isinstance(a, bytes):
-        return (a > b) - (a < b)
+        b_bytes = bytes(b)
+        return int(a > b_bytes) - int(a < b_bytes)
     if isinstance(a, DocumentReference):
         ap, bp = a.to_resource_name(), b.to_resource_name()
-        return (ap > bp) - (ap < bp)
+        return int(ap > bp) - int(ap < bp)
     if isinstance(a, GeoPoint):
-        c = (a.lat > b.lat) - (a.lat < b.lat)
+        c = int(a.lat > b.lat) - int(a.lat < b.lat)
         if c != 0:
             return c
-        return (a.lng > b.lng) - (a.lng < b.lng)
+        return int(a.lng > b.lng) - int(a.lng < b.lng)
     if isinstance(a, list):
         for x, y in zip(a, b, strict=False):
             c = compare(x, y)
             if c != 0:
                 return c
-        return (len(a) > len(b)) - (len(a) < len(b))
+        return int(len(a) > len(b)) - int(len(a) < len(b))
     if isinstance(a, dict):
         a_keys = sorted(a.keys())
         b_keys = sorted(b.keys())
         for ak, bk in zip(a_keys, b_keys, strict=False):
-            c = (ak > bk) - (ak < bk)
+            c = int(ak > bk) - int(ak < bk)
             if c != 0:
                 return c
             c = compare(a[ak], b[bk])
             if c != 0:
                 return c
-        return (len(a_keys) > len(b_keys)) - (len(a_keys) < len(b_keys))
+        return int(len(a_keys) > len(b_keys)) - int(len(a_keys) < len(b_keys))
     raise TypeError(f"unsupported comparison: {type(a).__name__}")

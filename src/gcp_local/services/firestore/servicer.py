@@ -127,7 +127,7 @@ def _parse_parent_for_list(parent: str) -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 
-class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[misc, name-defined]
+class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):
     def __init__(self, storage: FirestoreStorage, state_hub: StateHub | None) -> None:
         self._storage = storage
         self._state_hub = state_hub
@@ -1004,7 +1004,7 @@ async def _unimplemented(rpc_name: str, context: Any) -> None:
     await errors.abort_with(context, errors.Unimplemented(rpc_name))
 
 
-class FirestoreAdminServicer(firestore_admin_pb2_grpc.FirestoreAdminServicer):  # type: ignore[misc, name-defined]
+class FirestoreAdminServicer(firestore_admin_pb2_grpc.FirestoreAdminServicer):
     def __init__(self, storage: FirestoreStorage) -> None:
         self._storage = storage
 
