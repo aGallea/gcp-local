@@ -10,11 +10,18 @@ from typing import Any
 
 from google.protobuf import empty_pb2
 from google.protobuf.timestamp_pb2 import Timestamp
+from google.rpc import status_pb2
 
 from gcp_local.core.state_hub import StateHub
 from gcp_local.generated.google.firestore.admin.v1 import firestore_admin_pb2_grpc
-from gcp_local.generated.google.firestore.v1 import document_pb2, firestore_pb2, firestore_pb2_grpc
+from gcp_local.generated.google.firestore.v1 import (
+    document_pb2,
+    firestore_pb2,
+    firestore_pb2_grpc,
+    write_pb2,
+)
 from gcp_local.services.firestore import errors, names
+from gcp_local.services.firestore.engine.transforms import apply_transform
 from gcp_local.services.firestore.models import DocumentRecord
 from gcp_local.services.firestore.storage import FirestoreStorage
 from gcp_local.services.firestore.values import from_proto, to_proto
@@ -367,14 +374,143 @@ class FirestoreServicer(firestore_pb2_grpc.FirestoreServicer):  # type: ignore[m
             raise
 
     # ------------------------------------------------------------------
-    # Unimplemented stubs — wired in Task 8/11/12/13
+    # Commit (atomic multi-write)  — Task 8
     # ------------------------------------------------------------------
 
     async def Commit(self, request: Any, context: Any) -> Any:
-        await errors.abort_with(context, errors.Unimplemented("Commit"))
+        # Transactional commit is deferred to Task 12.
+        if request.transaction:
+            await errors.abort_with(context, errors.Unimplemented("transactional Commit"))
+            return
+
+        try:
+            project, database = names.parse_database_root(request.database)
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
+            return
+
+        commit_time = _now()
+        commit_ts = Timestamp()
+        commit_ts.FromDatetime(commit_time)
+
+        lock = self._storage.lock(project, database)
+        async with lock:
+            # Phase 1: compute new states for all writes (no persistence yet).
+            # If any write fails, the entire commit is aborted.
+            pending: list[tuple[str, DocumentRecord | None, list[Any]]] = []
+            try:
+                for write in request.writes:
+                    path, new_rec, transform_results = await _apply_write(
+                        self._storage, project, database, write, commit_time
+                    )
+                    pending.append((path, new_rec, transform_results))
+            except errors.FirestoreError as exc:
+                await errors.abort_with(context, exc)
+                return
+
+            # Phase 2: persist all computed states.
+            write_results: list[write_pb2.WriteResult] = []
+            for (path, new_rec, transform_results), _write in zip(
+                pending, request.writes, strict=True
+            ):
+                if new_rec is not None:
+                    await self._storage.put_document(new_rec)
+                    wr = write_pb2.WriteResult(update_time=commit_ts)
+                    if transform_results:
+                        wr.transform_results.extend(transform_results)
+                    write_results.append(wr)
+                    # Use update_time==create_time as proxy for "newly created".
+                    op_label = "create" if new_rec.create_time == new_rec.update_time else "update"
+                else:
+                    # delete
+                    await self._storage.delete_document(project, database, path)
+                    write_results.append(write_pb2.WriteResult())
+                    op_label = "delete"
+
+                if self._state_hub is not None:
+                    await self._state_hub.publish(
+                        "firestore.document.written",
+                        {
+                            "project": project,
+                            "database": database,
+                            "path": path,
+                            "operation": op_label,
+                            "update_time": commit_time.isoformat(),
+                        },
+                    )
+
+        await self._storage.snapshot(project, database)
+        return firestore_pb2.CommitResponse(
+            write_results=write_results,
+            commit_time=commit_ts,
+        )
+
+    # ------------------------------------------------------------------
+    # BatchWrite (independent per-write)  — Task 8
+    # ------------------------------------------------------------------
 
     async def BatchWrite(self, request: Any, context: Any) -> Any:
-        await errors.abort_with(context, errors.Unimplemented("BatchWrite"))
+        try:
+            project, database = names.parse_database_root(request.database)
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
+            return
+
+        write_results: list[write_pb2.WriteResult] = []
+        statuses: list[status_pb2.Status] = []
+
+        commit_time = _now()
+        commit_ts = Timestamp()
+        commit_ts.FromDatetime(commit_time)
+
+        for write in request.writes:
+            try:
+                path, new_rec, transform_results = await _apply_write(
+                    self._storage, project, database, write, commit_time
+                )
+            except errors.FirestoreError as exc:
+                grpc_err = errors.grpc_error_for(exc)
+                write_results.append(write_pb2.WriteResult())
+                statuses.append(
+                    status_pb2.Status(
+                        code=grpc_err.code().value[0],
+                        message=grpc_err.details(),
+                    )
+                )
+                continue
+
+            # Persist this individual write
+            if new_rec is not None:
+                await self._storage.put_document(new_rec)
+                wr = write_pb2.WriteResult(update_time=commit_ts)
+                if transform_results:
+                    wr.transform_results.extend(transform_results)
+                write_results.append(wr)
+                op_label = "create" if new_rec.create_time == new_rec.update_time else "update"
+            else:
+                await self._storage.delete_document(project, database, path)
+                write_results.append(write_pb2.WriteResult())
+                op_label = "delete"
+
+            statuses.append(status_pb2.Status(code=0))
+
+            if self._state_hub is not None:
+                await self._state_hub.publish(
+                    "firestore.document.written",
+                    {
+                        "project": project,
+                        "database": database,
+                        "path": path,
+                        "operation": op_label,
+                        "update_time": commit_time.isoformat(),
+                    },
+                )
+
+        await self._storage.snapshot(project, database)
+        return firestore_pb2.BatchWriteResponse(
+            write_results=write_results,
+            status=statuses,
+        )
 
     async def RunQuery(self, request: Any, context: Any) -> AsyncIterator[Any]:
         await errors.abort_with(context, errors.Unimplemented("RunQuery"))
@@ -442,6 +578,121 @@ def _delete_nested(target: dict[str, Any], parts: list[str]) -> None:
         d = d[part]
     if isinstance(d, dict):
         d.pop(parts[-1], None)
+
+
+async def _apply_write(
+    storage: FirestoreStorage,
+    project: str,
+    database: str,
+    write: Any,
+    commit_time: datetime,
+) -> tuple[str, DocumentRecord | None, list[Any]]:
+    """Compute the new document state for a single Write without persisting.
+
+    Returns ``(path, new_record_or_None_for_delete, transform_results)``.
+    Raises a FirestoreError on any validation / precondition failure.
+    """
+    which = write.WhichOneof("operation")
+    if which == "update_pipeline":
+        raise errors.Unimplemented("update_pipeline writes")
+
+    # ------------------------------------------------------------------
+    # Resolve existing document (needed by all branches)
+    # ------------------------------------------------------------------
+    if which == "update":
+        doc_name = write.update.name
+    elif which == "delete":
+        doc_name = write.delete
+    elif which == "transform":
+        doc_name = write.transform.document
+    else:
+        raise errors.Unimplemented(f"unknown write operation: {which}")
+
+    _, _, path = names.parse_document_path(doc_name)
+
+    existing: DocumentRecord | None
+    try:
+        existing = await storage.get_document(project, database, path)
+    except errors.DocumentNotFound:
+        existing = None
+
+    # Check precondition before applying the write.
+    if write.HasField("current_document"):
+        _check_precondition(existing, write.current_document)
+
+    # ------------------------------------------------------------------
+    # delete branch
+    # ------------------------------------------------------------------
+    if which == "delete":
+        return path, None, []
+
+    # ------------------------------------------------------------------
+    # update branch
+    # ------------------------------------------------------------------
+    if which == "update":
+        mask = write.update_mask
+        if mask and list(mask.field_paths):
+            merged: dict[str, Any] = dict(existing.fields) if existing else {}
+            incoming = _fields_from_proto(write.update)
+            for field_path in mask.field_paths:
+                parts = field_path.split(".")
+                if len(parts) == 1:
+                    field_name = parts[0]
+                    if field_name in incoming:
+                        merged[field_name] = incoming[field_name]
+                    else:
+                        merged.pop(field_name, None)
+                else:
+                    _set_nested(merged, parts, incoming)
+            new_fields: dict[str, Any] = merged
+        else:
+            new_fields = _fields_from_proto(write.update)
+
+        create_time = existing.create_time if existing else commit_time
+        version = await storage.next_version(project, database)
+
+        # Apply update_transforms, accumulating result values.
+        transform_results: list[Any] = []
+        for ft in write.update_transforms:
+            new_fields, result_val = apply_transform(new_fields, ft, commit_time)
+            transform_results.append(to_proto(result_val))
+
+        rec = DocumentRecord(
+            project=project,
+            database=database,
+            path=path,
+            fields=new_fields,
+            create_time=create_time,
+            update_time=commit_time,
+            version=version,
+        )
+        return path, rec, transform_results
+
+    # ------------------------------------------------------------------
+    # standalone transform branch (used in transactions; rare from clients)
+    # TODO: Task 12 — full transactional transform support.
+    # ------------------------------------------------------------------
+    if which == "transform":
+        if existing is None:
+            raise errors.InvalidArgument("standalone transform requires document to exist")
+        new_fields = dict(existing.fields)
+        transform_results_t: list[Any] = []
+        for ft in write.transform.field_transforms:
+            new_fields, result_val = apply_transform(new_fields, ft, commit_time)
+            transform_results_t.append(to_proto(result_val))
+        version = await storage.next_version(project, database)
+        rec = DocumentRecord(
+            project=project,
+            database=database,
+            path=path,
+            fields=new_fields,
+            create_time=existing.create_time,
+            update_time=commit_time,
+            version=version,
+        )
+        return path, rec, transform_results_t
+
+    raise errors.Unimplemented(f"unhandled write operation: {which}")  # pragma: no cover
 
 
 async def _iter_all_docs(storage: FirestoreStorage, project: str, database: str) -> list[str]:
