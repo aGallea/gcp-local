@@ -31,7 +31,7 @@ from gcp_local.services.firestore.engine.transactions import (
     rollback,
 )
 from gcp_local.services.firestore.engine.transforms import apply_transform
-from gcp_local.services.firestore.models import DocumentRecord
+from gcp_local.services.firestore.models import DocumentRecord, IndexRecord
 from gcp_local.services.firestore.storage import FirestoreStorage
 from gcp_local.services.firestore.values import from_proto, to_proto
 
@@ -945,10 +945,261 @@ async def _iter_all_docs(storage: FirestoreStorage, project: str, database: str)
 
 
 # ---------------------------------------------------------------------------
-# FirestoreAdminServicer — Task 13 fills in the RPC bodies
+# FirestoreAdminServicer — Task 13: index accept-and-ignore + RPC stubs
 # ---------------------------------------------------------------------------
+
+_BASE62 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_INDEX_ID_LEN = 16
+_DEFAULT_PAGE_SIZE = 100
+
+# Regex for collectionGroups parent:
+#   projects/<p>/databases/<db>/collectionGroups/<g>
+_COLLECTION_GROUP_RE = re.compile(r"^(projects/[^/]+/databases/[^/]+)/collectionGroups/([^/]+)$")
+
+
+def _mint_index_id() -> str:
+    return "".join(secrets.choice(_BASE62) for _ in range(_INDEX_ID_LEN))
+
+
+def _parse_collection_group_parent(parent: str) -> tuple[str, str, str]:
+    """Return (project, database, collection_group) from a collectionGroups parent.
+
+    Raises ValueError for malformed strings.
+    """
+    m = _COLLECTION_GROUP_RE.match(parent)
+    if not m:
+        raise ValueError(f"invalid collectionGroups parent: {parent!r}")
+    db_root = m.group(1)  # "projects/<p>/databases/<db>"
+    group = m.group(2)
+    project, database = names.parse_database_root(db_root)
+    return project, database, group
+
+
+def _index_record_to_proto(rec: IndexRecord) -> Any:
+    """Convert a stored IndexRecord to an index_pb2.Index proto."""
+    from gcp_local.generated.google.firestore.admin.v1 import index_pb2
+
+    state_map = {
+        "READY": index_pb2.Index.READY,
+        "CREATING": index_pb2.Index.CREATING,
+        "NEEDS_REPAIR": index_pb2.Index.NEEDS_REPAIR,
+    }
+    state = state_map.get(rec.state, index_pb2.Index.READY)
+    return index_pb2.Index(name=rec.name, state=state)
+
+
+async def _unimplemented(rpc_name: str, context: Any) -> None:
+    """Abort context with UNIMPLEMENTED for the named RPC."""
+    await errors.abort_with(context, errors.Unimplemented(rpc_name))
 
 
 class FirestoreAdminServicer(firestore_admin_pb2_grpc.FirestoreAdminServicer):  # type: ignore[misc, name-defined]
     def __init__(self, storage: FirestoreStorage) -> None:
         self._storage = storage
+
+    # ------------------------------------------------------------------
+    # CreateIndex
+    # ------------------------------------------------------------------
+
+    async def CreateIndex(self, request: Any, context: Any) -> Any:
+        from google.longrunning import operations_pb2
+
+        from gcp_local.generated.google.firestore.admin.v1 import index_pb2
+
+        try:
+            project, database, _group = _parse_collection_group_parent(request.parent)
+        except (ValueError, errors.FirestoreError) as exc:
+            await errors.abort_with(context, errors.InvalidName(str(exc)))
+            return
+
+        index_id = _mint_index_id()
+        index_name = f"{request.parent}/indexes/{index_id}"
+
+        # Preserve fields supplied by the caller; store as plain dicts.
+        fields_data: list[dict[str, Any]] = [
+            {"field_path": f.field_path} for f in request.index.fields
+        ]
+
+        rec = IndexRecord(name=index_name, fields=fields_data, state="READY")
+        await self._storage.put_index(project, database, rec)
+
+        # Build the Index proto to embed in the Operation response.
+        index_proto = index_pb2.Index(name=index_name, state=index_pb2.Index.READY)
+
+        op_name = f"{index_name}/operations/{_mint_index_id()}"
+        op = operations_pb2.Operation(name=op_name, done=True)
+        op.response.Pack(index_proto)
+        return op
+
+    # ------------------------------------------------------------------
+    # GetIndex
+    # ------------------------------------------------------------------
+
+    async def GetIndex(self, request: Any, context: Any) -> Any:
+        # name: "projects/<p>/databases/<db>/collectionGroups/<g>/indexes/<id>"
+        # Extract project + database from the name prefix.
+        name = request.name
+        m = re.match(r"^(projects/[^/]+/databases/[^/]+)/", name)
+        if not m:
+            await errors.abort_with(context, errors.InvalidName(f"invalid index name: {name!r}"))
+            return
+        try:
+            project, database = names.parse_database_root(m.group(1))
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
+            return
+
+        rec = await self._storage.get_index(project, database, name)
+        if rec is None:
+            await errors.abort_with(context, errors.DocumentNotFound(f"index {name!r} not found"))
+            return
+
+        return _index_record_to_proto(rec)
+
+    # ------------------------------------------------------------------
+    # ListIndexes
+    # ------------------------------------------------------------------
+
+    async def ListIndexes(self, request: Any, context: Any) -> Any:
+        from gcp_local.generated.google.firestore.admin.v1 import firestore_admin_pb2
+
+        try:
+            project, database, _group = _parse_collection_group_parent(request.parent)
+        except (ValueError, errors.FirestoreError) as exc:
+            await errors.abort_with(context, errors.InvalidName(str(exc)))
+            return
+
+        page_size: int = request.page_size or _DEFAULT_PAGE_SIZE
+        page_token: str = request.page_token or ""
+
+        all_indexes = await self._storage.list_indexes(project, database)
+        # Filter to those whose name starts with this parent
+        parent_prefix = f"{request.parent}/indexes/"
+        all_indexes = [idx for idx in all_indexes if idx.name.startswith(parent_prefix)]
+        all_indexes.sort(key=lambda r: r.name)
+
+        # Apply page_token: resume after the name stored in the token.
+        if page_token:
+            try:
+                start_idx = next(i + 1 for i, r in enumerate(all_indexes) if r.name == page_token)
+                all_indexes = all_indexes[start_idx:]
+            except StopIteration:
+                all_indexes = []
+
+        next_page_token = ""
+        if page_size and len(all_indexes) > page_size:
+            all_indexes = all_indexes[:page_size]
+            next_page_token = all_indexes[-1].name
+
+        return firestore_admin_pb2.ListIndexesResponse(
+            indexes=[_index_record_to_proto(r) for r in all_indexes],
+            next_page_token=next_page_token,
+        )
+
+    # ------------------------------------------------------------------
+    # DeleteIndex
+    # ------------------------------------------------------------------
+
+    async def DeleteIndex(self, request: Any, context: Any) -> Any:
+        name = request.name
+        m = re.match(r"^(projects/[^/]+/databases/[^/]+)/", name)
+        if not m:
+            await errors.abort_with(context, errors.InvalidName(f"invalid index name: {name!r}"))
+            return
+        try:
+            project, database = names.parse_database_root(m.group(1))
+        except errors.FirestoreError as exc:
+            await errors.abort_with(context, exc)
+            return
+
+        # No-op if missing, per real Firestore behaviour.
+        await self._storage.delete_index(project, database, name)
+        return empty_pb2.Empty()
+
+    # ------------------------------------------------------------------
+    # Unimplemented stubs
+    # ------------------------------------------------------------------
+
+    async def GetField(self, request: Any, context: Any) -> Any:
+        await _unimplemented("GetField", context)
+
+    async def UpdateField(self, request: Any, context: Any) -> Any:
+        await _unimplemented("UpdateField", context)
+
+    async def ListFields(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ListFields", context)
+
+    async def ExportDocuments(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ExportDocuments", context)
+
+    async def ImportDocuments(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ImportDocuments", context)
+
+    async def BulkDeleteDocuments(self, request: Any, context: Any) -> Any:
+        await _unimplemented("BulkDeleteDocuments", context)
+
+    async def CreateDatabase(self, request: Any, context: Any) -> Any:
+        await _unimplemented("CreateDatabase", context)
+
+    async def GetDatabase(self, request: Any, context: Any) -> Any:
+        await _unimplemented("GetDatabase", context)
+
+    async def ListDatabases(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ListDatabases", context)
+
+    async def UpdateDatabase(self, request: Any, context: Any) -> Any:
+        await _unimplemented("UpdateDatabase", context)
+
+    async def DeleteDatabase(self, request: Any, context: Any) -> Any:
+        await _unimplemented("DeleteDatabase", context)
+
+    async def CreateUserCreds(self, request: Any, context: Any) -> Any:
+        await _unimplemented("CreateUserCreds", context)
+
+    async def GetUserCreds(self, request: Any, context: Any) -> Any:
+        await _unimplemented("GetUserCreds", context)
+
+    async def ListUserCreds(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ListUserCreds", context)
+
+    async def EnableUserCreds(self, request: Any, context: Any) -> Any:
+        await _unimplemented("EnableUserCreds", context)
+
+    async def DisableUserCreds(self, request: Any, context: Any) -> Any:
+        await _unimplemented("DisableUserCreds", context)
+
+    async def ResetUserPassword(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ResetUserPassword", context)
+
+    async def DeleteUserCreds(self, request: Any, context: Any) -> Any:
+        await _unimplemented("DeleteUserCreds", context)
+
+    async def GetBackup(self, request: Any, context: Any) -> Any:
+        await _unimplemented("GetBackup", context)
+
+    async def ListBackups(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ListBackups", context)
+
+    async def DeleteBackup(self, request: Any, context: Any) -> Any:
+        await _unimplemented("DeleteBackup", context)
+
+    async def RestoreDatabase(self, request: Any, context: Any) -> Any:
+        await _unimplemented("RestoreDatabase", context)
+
+    async def CreateBackupSchedule(self, request: Any, context: Any) -> Any:
+        await _unimplemented("CreateBackupSchedule", context)
+
+    async def GetBackupSchedule(self, request: Any, context: Any) -> Any:
+        await _unimplemented("GetBackupSchedule", context)
+
+    async def ListBackupSchedules(self, request: Any, context: Any) -> Any:
+        await _unimplemented("ListBackupSchedules", context)
+
+    async def UpdateBackupSchedule(self, request: Any, context: Any) -> Any:
+        await _unimplemented("UpdateBackupSchedule", context)
+
+    async def DeleteBackupSchedule(self, request: Any, context: Any) -> Any:
+        await _unimplemented("DeleteBackupSchedule", context)
+
+    async def CloneDatabase(self, request: Any, context: Any) -> Any:
+        await _unimplemented("CloneDatabase", context)
