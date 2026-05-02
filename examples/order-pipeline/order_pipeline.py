@@ -73,6 +73,7 @@ class OrderPipeline:
         self._setup_gcs()
         self._setup_bigquery()
         self._setup_pubsub()
+        self._setup_firestore()
 
     def _setup_secret_manager(self) -> None:
         import contextlib
@@ -257,3 +258,39 @@ class OrderPipeline:
                 request={"subscription": self._subscription_path, "ack_ids": ack_ids}
             )
         return payloads
+
+    def _setup_firestore(self) -> None:
+        from google.cloud import firestore
+
+        self._fs_client = firestore.Client(project=self.project)
+
+    def _write_order_doc(
+        self,
+        *,
+        order_id: str,
+        customer: str,
+        amount: float,
+        item: str,
+        masked_key: str,
+    ) -> None:
+        from google.cloud import firestore
+
+        self._fs_client.collection("orders").document(order_id).set(
+            {
+                "status": "pending",
+                "customer": customer,
+                "amount": amount,
+                "item": item,
+                "key_used": masked_key,
+                "created_at": firestore.SERVER_TIMESTAMP,
+            }
+        )
+
+    def _get_order_doc(self, order_id: str) -> dict:
+        snap = self._fs_client.collection("orders").document(order_id).get()
+        if not snap.exists:
+            raise KeyError(order_id)
+        return snap.to_dict()
+
+    def _update_order_status(self, order_id: str, status: str) -> None:
+        self._fs_client.collection("orders").document(order_id).update({"status": status})

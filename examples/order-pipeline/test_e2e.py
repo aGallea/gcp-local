@@ -65,3 +65,16 @@ def test_pubsub_publish_and_pull(pipeline: OrderPipeline) -> None:
     pipeline._publish_order_event({"order_id": "ps-test-1", "status": "pending"})
     pulled = pipeline._pull_pending_events(timeout_s=2.0)
     assert any(msg.get("order_id") == "ps-test-1" for msg in pulled)
+
+
+def test_firestore_write_and_read(pipeline: OrderPipeline) -> None:
+    pipeline._write_order_doc(
+        order_id="fs-test-1",
+        customer="bob",
+        amount=12.5,
+        item="bolt",
+        masked_key="sk_t***",
+    )
+    doc = pipeline._get_order_doc("fs-test-1")
+    assert doc["status"] == "pending"
+    assert doc["customer"] == "bob"
