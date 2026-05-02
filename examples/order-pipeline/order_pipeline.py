@@ -9,6 +9,10 @@ import os
 import time
 import urllib.error
 import urllib.request
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 class OrderPipeline:
@@ -67,6 +71,7 @@ class OrderPipeline:
         """Idempotent service setup. Safe to call repeatedly."""
         self._setup_secret_manager()
         self._setup_gcs()
+        self._setup_bigquery()
 
     def _setup_secret_manager(self) -> None:
         import contextlib
@@ -128,3 +133,77 @@ class OrderPipeline:
     def _download_invoice(self, order_id: str) -> str:
         bucket = self._gcs_client.bucket(self.BUCKET_NAME)
         return bucket.blob(f"orders/{order_id}/invoice.txt").download_as_text()
+
+    DATASET_ID = "orders"
+    TABLE_ID = "events"
+
+    def _setup_bigquery(self) -> None:
+        import contextlib
+
+        from google.api_core.exceptions import Conflict
+        from google.auth import credentials as ga_credentials
+        from google.cloud import bigquery
+
+        endpoint = f"http://{os.environ['BIGQUERY_EMULATOR_HOST']}"
+        self._bq_client = bigquery.Client(
+            project=self.project,
+            credentials=ga_credentials.AnonymousCredentials(),
+            client_options={"api_endpoint": endpoint},
+        )
+
+        dataset_ref = bigquery.DatasetReference(self.project, self.DATASET_ID)
+        with contextlib.suppress(Conflict):
+            self._bq_client.create_dataset(bigquery.Dataset(dataset_ref))
+
+        table_ref = bigquery.TableReference(dataset_ref, self.TABLE_ID)
+        schema = [
+            bigquery.SchemaField("order_id", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("customer", "STRING", mode="REQUIRED"),
+            bigquery.SchemaField("amount", "FLOAT64", mode="REQUIRED"),
+            bigquery.SchemaField("item", "STRING", mode="REQUIRED"),
+            # gcp-local's BigQuery emulator has a known issue reading TIMESTAMP
+            # columns via the streaming-insert path; we store the timestamp as
+            # an ISO-8601 STRING for the demo. Production code would normally
+            # use TIMESTAMP here.
+            bigquery.SchemaField("ts", "STRING", mode="REQUIRED"),
+        ]
+        with contextlib.suppress(Conflict):
+            self._bq_client.create_table(bigquery.Table(table_ref, schema=schema))
+        self._bq_table_ref = table_ref
+
+    def _insert_event(
+        self,
+        *,
+        order_id: str,
+        customer: str,
+        amount: float,
+        item: str,
+        ts: datetime,
+    ) -> None:
+        # The streaming-insert path (insert_rows_json) currently has timing
+        # issues against gcp-local's BigQuery emulator. Use a plain INSERT
+        # statement instead — same pattern the existing integration tests
+        # use. Order ids and customer names are tightly controlled in this
+        # demo (UUID hex / static test strings) but we still escape single
+        # quotes defensively.
+        def q(s: str) -> str:
+            return s.replace("'", "''")
+        sql = (
+            f"INSERT INTO `{self.project}.{self.DATASET_ID}.{self.TABLE_ID}` "
+            f"(order_id, customer, amount, item, ts) VALUES "
+            f"('{q(order_id)}', '{q(customer)}', {amount}, '{q(item)}', '{ts.isoformat()}')"
+        )
+        self._bq_client.query(sql).result()
+
+    def _select_events_for_order(self, order_id: str) -> list[dict]:
+        # gcp-local's BigQuery emulator does not currently support parameterized
+        # queries (`@oid`), so we interpolate manually. order_id is tightly
+        # controlled in this demo (UUID hex or static test strings), but we
+        # still escape single quotes defensively.
+        safe = order_id.replace("'", "''")
+        query = (
+            f"SELECT order_id, customer, amount, item, ts "
+            f"FROM `{self.project}.{self.DATASET_ID}.{self.TABLE_ID}` "
+            f"WHERE order_id = '{safe}'"
+        )
+        return [dict(row) for row in self._bq_client.query(query).result()]

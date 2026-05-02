@@ -41,3 +41,19 @@ def test_gcs_invoice_upload(pipeline: OrderPipeline) -> None:
     )
     body = pipeline._download_invoice("test-order-001")
     assert "Amount: 99.99" in body
+
+
+def test_bigquery_insert_and_select(pipeline: OrderPipeline) -> None:
+    import datetime
+
+    pipeline._insert_event(
+        order_id="bq-test-1",
+        customer="alice",
+        amount=42.5,
+        item="widget",
+        ts=datetime.datetime(2026, 5, 2, 12, 0, 0, tzinfo=datetime.UTC),
+    )
+    rows = pipeline._select_events_for_order("bq-test-1")
+    assert len(rows) == 1
+    assert rows[0]["customer"] == "alice"
+    assert float(rows[0]["amount"]) == 42.5
