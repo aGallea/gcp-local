@@ -104,9 +104,7 @@ async def test_create_subscription_accepts_push_config(env) -> None:
     import httpx
 
     _, subscriber = env
-    subscriber._push_transport_factory = lambda: httpx.MockTransport(
-        lambda r: httpx.Response(200)
-    )
+    subscriber._push_transport_factory = lambda: httpx.MockTransport(lambda r: httpx.Response(200))
     try:
         req = pubsub_pb2.Subscription(
             name="projects/p/subscriptions/sub-a",
