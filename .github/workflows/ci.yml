@@ -5,6 +5,13 @@ on:
     branches: [master]
     tags: ['v*']
   pull_request:
+  # release-please creates the v* tag using GITHUB_TOKEN, which by design
+  # cannot trigger other workflows (recursion guard). It also publishes a
+  # GitHub Release — that DOES trigger downstream workflows. Listen here
+  # so publish-image fires on a release-please-driven release without
+  # needing a manual tag re-push.
+  release:
+    types: [published]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -53,12 +60,18 @@ jobs:
       - run: pytest tests/integration/test_docker_image.py -v
 
   publish-image:
-    # Publishes a multi-arch image to GitHub Container Registry. Skips PR runs
-    # (no credentials, no point); runs on master pushes and on `v*` tag pushes.
+    # Publishes a multi-arch image to GitHub Container Registry. Runs on:
+    #   - push to master      → :latest + :master-<sha>
+    #   - push to v* tag      → :vX.Y.Z + :vX.Y (manual tag pushes only)
+    #   - release: published  → :vX.Y.Z + :vX.Y (release-please path; the v*
+    #                           tag it creates with GITHUB_TOKEN can't trigger
+    #                           push events on its own, but the published
+    #                           release does)
+    # Skips PR runs (no credentials, no point).
     # Depends on `docker` so we only publish images that passed the smoke test.
     runs-on: ubuntu-latest
     needs: [docker, integration]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'release'
     permissions:
       contents: read
       packages: write
