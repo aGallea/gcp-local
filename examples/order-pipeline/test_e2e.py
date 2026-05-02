@@ -7,6 +7,8 @@ from this directory before invoking pytest).
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from order_pipeline import OrderPipeline
 
@@ -78,3 +80,52 @@ def test_firestore_write_and_read(pipeline: OrderPipeline) -> None:
     doc = pipeline._get_order_doc("fs-test-1")
     assert doc["status"] == "pending"
     assert doc["customer"] == "bob"
+
+
+def _new_order_id(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def test_place_order_writes_to_firestore_and_gcs_and_bq(pipeline: OrderPipeline) -> None:
+    order_id = _new_order_id("placeorder")
+    pipeline.place_order(order_id=order_id, customer="alice", amount=10.0, item="bolt")
+
+    fs_doc = pipeline._get_order_doc(order_id)
+    assert fs_doc["status"] == "pending"
+    assert fs_doc["customer"] == "alice"
+    assert fs_doc["key_used"].startswith("sk_t") and "***" in fs_doc["key_used"]
+
+    invoice = pipeline._download_invoice(order_id)
+    assert order_id in invoice
+    assert "10.0" in invoice or "10.00" in invoice
+
+    rows = pipeline._select_events_for_order(order_id)
+    assert len(rows) == 1
+    assert rows[0]["customer"] == "alice"
+
+
+def test_confirm_pending_orders_updates_firestore(pipeline: OrderPipeline) -> None:
+    order_id = _new_order_id("confirm")
+    pipeline.place_order(order_id=order_id, customer="carol", amount=5.0, item="screw")
+
+    confirmed = pipeline.confirm_pending_orders(timeout_s=5.0)
+    assert confirmed >= 1
+
+    doc = pipeline._get_order_doc(order_id)
+    assert doc["status"] == "confirmed"
+
+
+def test_daily_totals_aggregates_per_customer(pipeline: OrderPipeline) -> None:
+    suffix = uuid.uuid4().hex[:6]
+    pipeline.place_order(
+        order_id=f"tot-{suffix}-a", customer=f"dave-{suffix}", amount=7.0, item="x"
+    )
+    pipeline.place_order(
+        order_id=f"tot-{suffix}-b", customer=f"dave-{suffix}", amount=3.0, item="y"
+    )
+
+    totals = pipeline.daily_totals()
+    assert any(
+        cust == f"dave-{suffix}" and abs(float(total) - 10.0) < 1e-6
+        for cust, total in totals.items()
+    )

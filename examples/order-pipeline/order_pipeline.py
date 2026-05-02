@@ -9,6 +9,7 @@ import os
 import time
 import urllib.error
 import urllib.request
+from datetime import UTC
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -294,3 +295,79 @@ class OrderPipeline:
 
     def _update_order_status(self, order_id: str, status: str) -> None:
         self._fs_client.collection("orders").document(order_id).update({"status": status})
+
+    def place_order(
+        self,
+        *,
+        order_id: str,
+        customer: str,
+        amount: float,
+        item: str,
+    ) -> None:
+        """Hits all five services for a single order:
+
+        1) Secret Manager — look up the API key, mask for storage.
+        2) Firestore       — write the order doc with status=pending.
+        3) GCS             — upload the invoice text.
+        4) BigQuery        — record the analytics event.
+        5) Pub/Sub         — publish a notification message.
+        """
+        from datetime import datetime
+
+        full_key = self._lookup_payment_key()
+        masked_key = full_key[:4] + "***"
+
+        self._write_order_doc(
+            order_id=order_id,
+            customer=customer,
+            amount=amount,
+            item=item,
+            masked_key=masked_key,
+        )
+
+        invoice_body = (
+            f"Invoice for {order_id}\nCustomer: {customer}\nAmount: {amount:.2f}\nItem: {item}\n"
+        )
+        self._upload_invoice(order_id=order_id, body=invoice_body)
+
+        self._insert_event(
+            order_id=order_id,
+            customer=customer,
+            amount=amount,
+            item=item,
+            ts=datetime.now(tz=UTC),
+        )
+
+        self._publish_order_event({"order_id": order_id, "status": "pending"})
+
+    def confirm_pending_orders(self, *, timeout_s: float = 5.0) -> int:
+        """Pull notification messages and update each referenced doc to status=confirmed.
+
+        Returns the number of orders confirmed.
+        """
+        events = self._pull_pending_events(timeout_s=timeout_s)
+        confirmed = 0
+        for event in events:
+            order_id = event.get("order_id")
+            if not order_id:
+                continue
+            try:
+                self._update_order_status(order_id, "confirmed")
+                confirmed += 1
+            except Exception:
+                # Doc may have been removed by another process; skip silently in
+                # the demo. Real apps would handle this explicitly.
+                continue
+        return confirmed
+
+    def daily_totals(self) -> dict[str, float]:
+        """Aggregate amount per customer across all events. Returns {customer: total}."""
+        query = (
+            f"SELECT customer, SUM(amount) AS total "
+            f"FROM `{self.project}.{self.DATASET_ID}.{self.TABLE_ID}` "
+            f"GROUP BY customer "
+            f"ORDER BY total DESC"
+        )
+        return {
+            row["customer"]: float(row["total"]) for row in self._bq_client.query(query).result()
+        }
