@@ -93,16 +93,34 @@ async def test_create_subscription_duplicate_aborts(env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_subscription_accepts_push_config_no_op(env) -> None:
-    """pushConfig is stored verbatim — no HTTP delivery loop runs in v1."""
+async def test_create_subscription_accepts_push_config(env) -> None:
+    """pushConfig round-trips through CreateSubscription / GetSubscription.
+
+    Push delivery itself is exercised in :mod:`tests.unit.services.pubsub.test_push`;
+    this test only asserts that the field round-trips on the wire. We inject an
+    httpx mock transport so the pump that ``_ensure_pump`` starts does not try
+    to POST to the (real) example.com endpoint.
+    """
+    import httpx
+
     _, subscriber = env
-    req = pubsub_pb2.Subscription(
-        name="projects/p/subscriptions/sub-a",
-        topic="projects/p/topics/topic-a",
-        push_config=pubsub_pb2.PushConfig(push_endpoint="https://example.com/hook"),
+    subscriber._push_transport_factory = lambda: httpx.MockTransport(
+        lambda r: httpx.Response(200)
     )
-    resp = await subscriber.CreateSubscription(req, _Ctx())
-    assert resp.push_config.push_endpoint == "https://example.com/hook"
+    try:
+        req = pubsub_pb2.Subscription(
+            name="projects/p/subscriptions/sub-a",
+            topic="projects/p/topics/topic-a",
+            push_config=pubsub_pb2.PushConfig(push_endpoint="https://example.com/hook"),
+        )
+        resp = await subscriber.CreateSubscription(req, _Ctx())
+        assert resp.push_config.push_endpoint == "https://example.com/hook"
+    finally:
+        # Stop the pump the create-subscription RPC started so asyncio teardown
+        # doesn't see a dangling task.
+        pump = subscriber._pumps.pop(("p", "sub-a"), None)
+        if pump is not None:
+            await pump.stop()
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@ import contextlib
 import datetime as dt
 import itertools
 from collections import defaultdict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any, NoReturn
 
 import grpc
@@ -19,6 +19,7 @@ from gcp_local.services.pubsub.engine.backlog import (
     DeliveredMessage,
     SubscriptionBacklog,
 )
+from gcp_local.services.pubsub.engine.push import PushPump
 from gcp_local.services.pubsub.engine.streaming import FlowControl
 from gcp_local.services.pubsub.errors import (
     InvalidArgument,
@@ -309,6 +310,9 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
         self._publisher = publisher  # used to register deliverable events
         self._backlogs: dict[tuple[str, str], SubscriptionBacklog] = {}
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._pumps: dict[tuple[str, str], PushPump] = {}
+        # Tests inject httpx.MockTransport via this hook; production leaves it None.
+        self._push_transport_factory: Callable[[], Any] | None = None
 
     async def _get_backlog(
         self, project: str, sub_id: str
@@ -330,9 +334,46 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
     async def _drop_backlog(self, project: str, sub_id: str) -> None:
         """Called from DeleteSubscription so the backlog is cleaned up."""
         key = (project, sub_id)
+        pump = self._pumps.pop(key, None)
+        if pump is not None:
+            await pump.stop()
         self._backlogs.pop(key, None)
         self._locks.pop(key, None)
         self._publisher.deliverable_events.pop(key, None)
+
+    async def _ensure_pump(self, rec: SubscriptionRecord) -> None:
+        """Reconcile the push pump for ``rec`` with the desired state.
+
+        - No push endpoint → stop any running pump.
+        - Push endpoint unchanged → no-op.
+        - New / different endpoint → stop old pump, start a new one.
+        """
+        endpoint = (rec.push_config or {}).get("push_endpoint")
+        key = (rec.project, rec.subscription_id)
+        existing = self._pumps.get(key)
+        if not endpoint:
+            if existing is not None:
+                await existing.stop()
+                self._pumps.pop(key, None)
+            return
+        if existing is not None and existing.push_endpoint == endpoint:
+            return
+        if existing is not None:
+            await existing.stop()
+            self._pumps.pop(key, None)
+        backlog, _ = await self._get_backlog(rec.project, rec.subscription_id)
+        topic_project = rec.topic_project
+        topic_id = rec.topic_id
+        transport = self._push_transport_factory() if self._push_transport_factory else None
+        pump = PushPump(
+            subscription_name=f"projects/{rec.project}/subscriptions/{rec.subscription_id}",
+            push_endpoint=endpoint,
+            backlog=backlog,
+            get_messages=lambda: self._storage.get_messages_sync(topic_project, topic_id),
+            transport=transport,
+        )
+        await pump.start()
+        self._pumps[key] = pump
 
     async def CreateSubscription(
         self,
@@ -342,6 +383,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
         try:
             rec = _sub_proto_to_record(request)
             await self._storage.create_subscription(rec)
+            await self._ensure_pump(rec)
         except (PubSubError, InvalidName) as e:
             await _abort(context, e)
         return _sub_record_to_proto(rec)
@@ -367,6 +409,17 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
             project, sub_id = _parse_subscription(request.subscription.name)
             existing = await self._storage.get_subscription(project, sub_id)
             paths = set(request.update_mask.paths)
+            new_push_config: dict[str, Any] | None
+            if "push_config" in paths:
+                pc = request.subscription.push_config
+                if request.subscription.HasField("push_config") and pc.push_endpoint:
+                    new_push_config = {"push_endpoint": pc.push_endpoint}
+                    if pc.attributes:
+                        new_push_config["attributes"] = dict(pc.attributes)
+                else:
+                    new_push_config = None
+            else:
+                new_push_config = existing.push_config
             updated = SubscriptionRecord(
                 project=existing.project,
                 subscription_id=existing.subscription_id,
@@ -378,7 +431,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
                     else existing.ack_deadline_seconds
                 ),
                 enable_message_ordering=existing.enable_message_ordering,
-                push_config=existing.push_config,
+                push_config=new_push_config,
                 filter=existing.filter,
                 dead_letter_policy=existing.dead_letter_policy,
                 retry_policy=existing.retry_policy,
@@ -391,6 +444,7 @@ class SubscriberServicer(pubsub_pb2_grpc.SubscriberServicer):
                 create_time=existing.create_time,
             )
             await self._storage.update_subscription(updated)
+            await self._ensure_pump(updated)
         except (PubSubError, InvalidName) as e:
             await _abort(context, e)
         return _sub_record_to_proto(updated)

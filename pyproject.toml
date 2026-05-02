@@ -37,6 +37,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.3",
     "mypy>=1.9",
+    "aiohttp>=3.9",
     "google-cloud-storage>=2.14",
     "google-cloud-bigquery>=3.17",
     "google-cloud-pubsub>=2.19",

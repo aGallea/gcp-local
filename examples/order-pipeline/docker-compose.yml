@@ -13,6 +13,12 @@ services:
       - "8085:8085"  # pubsub
       - "8086:8086"  # secret_manager
       - "9050:9050"  # bigquery
+    # Allow the emulator container to reach a server on the host. Required for
+    # the push-subscription e2e test, which spins up an aiohttp endpoint on the
+    # host and points a Pub/Sub push subscription at http://host.docker.internal:<port>.
+    # Mac/Windows resolve this automatically; Linux runners need the explicit mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,json,sys; r=json.load(urllib.request.urlopen('http://localhost:4510/_emulator/health')); sys.exit(0 if r.get('ok') else 1)\""]
       interval: 1s

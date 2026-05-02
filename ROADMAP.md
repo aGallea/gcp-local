@@ -67,7 +67,6 @@ See the "What's not emulated" section of [`docs/services/gcs.md`](docs/services/
 
 ### Pub/Sub
 
-- **Push subscriptions** — `pushConfig` is accepted and stored, but the emulator does not POST to the URL.
 - **Subscription filters** — `filter` is accepted and stored, but every message is delivered regardless.
 - **Schema service** — `SchemaService` RPCs not implemented.
 - **Snapshots** — `CreateSnapshot` / `Seek(snapshot=...)` return `UNIMPLEMENTED`.

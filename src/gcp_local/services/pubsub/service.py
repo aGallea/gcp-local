@@ -1,5 +1,6 @@
 """Pub/Sub Service — owns the gRPC server lifecycle."""
 
+import asyncio
 import contextlib
 import logging
 from typing import ClassVar
@@ -36,6 +37,7 @@ class PubSubService:
         self._started = False
         self._storage: PubSubStorage | None = None
         self._sweeper: RedeliverySweeper | None = None
+        self._subscriber: SubscriberServicer | None = None
 
     async def start(self, ctx: Context) -> None:
         if ctx.persist:
@@ -46,6 +48,7 @@ class PubSubService:
         self._server.add_insecure_port(f"[::]:{port}")
         publisher = PublisherServicer(storage=self._storage, state_hub=ctx.state_hub)
         subscriber = SubscriberServicer(storage=self._storage, publisher=publisher)
+        self._subscriber = subscriber
         pubsub_pb2_grpc.add_PublisherServicer_to_server(publisher, self._server)  # type: ignore[no-untyped-call]
         pubsub_pb2_grpc.add_SubscriberServicer_to_server(subscriber, self._server)  # type: ignore[no-untyped-call]
         self._sweeper = RedeliverySweeper(backlogs=subscriber._backlogs)
@@ -59,6 +62,12 @@ class PubSubService:
             with contextlib.suppress(Exception):
                 await self._sweeper.stop()
             self._sweeper = None
+        if self._subscriber is not None:
+            pumps = list(self._subscriber._pumps.values())
+            self._subscriber._pumps.clear()
+            if pumps:
+                await asyncio.gather(*(p.stop() for p in pumps), return_exceptions=True)
+            self._subscriber = None
         if self._server is not None:
             with contextlib.suppress(Exception):
                 # grace=0 force-cancels in-flight RPCs immediately. ``None``
@@ -69,6 +78,11 @@ class PubSubService:
         self._started = False
 
     async def reset_state(self) -> None:
+        if self._subscriber is not None:
+            pumps = list(self._subscriber._pumps.values())
+            self._subscriber._pumps.clear()
+            if pumps:
+                await asyncio.gather(*(p.stop() for p in pumps), return_exceptions=True)
         if self._storage is not None:
             await self._storage.reset()
 
