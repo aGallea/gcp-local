@@ -1,0 +1,21 @@
+services:
+  gcp-local:
+    build:
+      context: ../..
+      dockerfile: docker/Dockerfile
+    environment:
+      SERVICES: "bigquery,gcs,secret_manager,pubsub,firestore"
+      PERSIST: "0"
+    ports:
+      - "4510:4510"  # admin
+      - "4443:4443"  # gcs
+      - "8080:8080"  # firestore
+      - "8085:8085"  # pubsub
+      - "8086:8086"  # secret_manager
+      - "9050:9050"  # bigquery
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,json,sys; r=json.load(urllib.request.urlopen('http://localhost:4510/_emulator/health')); sys.exit(0 if r.get('ok') else 1)\""]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s

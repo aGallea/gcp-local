@@ -74,7 +74,7 @@ python_version = "3.13"
 strict = true
 packages = ["gcp_local"]
 mypy_path = "src"
-exclude = ["src/gcp_local/generated/"]
+exclude = ["src/gcp_local/generated/", "examples/"]
 
 [[tool.mypy.overrides]]
 module = ["google.protobuf.*", "google.type.*", "google.rpc.*", "google.longrunning.*"]
