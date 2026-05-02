@@ -72,6 +72,7 @@ class OrderPipeline:
         self._setup_secret_manager()
         self._setup_gcs()
         self._setup_bigquery()
+        self._setup_pubsub()
 
     def _setup_secret_manager(self) -> None:
         import contextlib
@@ -188,6 +189,7 @@ class OrderPipeline:
         # quotes defensively.
         def q(s: str) -> str:
             return s.replace("'", "''")
+
         sql = (
             f"INSERT INTO `{self.project}.{self.DATASET_ID}.{self.TABLE_ID}` "
             f"(order_id, customer, amount, item, ts) VALUES "
@@ -207,3 +209,51 @@ class OrderPipeline:
             f"WHERE order_id = '{safe}'"
         )
         return [dict(row) for row in self._bq_client.query(query).result()]
+
+    TOPIC_ID = "order-events"
+    SUBSCRIPTION_ID = "order-events-sub"
+
+    def _setup_pubsub(self) -> None:
+        import contextlib
+
+        from google.api_core.exceptions import AlreadyExists
+        from google.cloud import pubsub_v1
+
+        self._publisher = pubsub_v1.PublisherClient()
+        self._subscriber = pubsub_v1.SubscriberClient()
+
+        self._topic_path = self._publisher.topic_path(self.project, self.TOPIC_ID)
+        self._subscription_path = self._subscriber.subscription_path(
+            self.project, self.SUBSCRIPTION_ID
+        )
+
+        with contextlib.suppress(AlreadyExists):
+            self._publisher.create_topic(request={"name": self._topic_path})
+        with contextlib.suppress(AlreadyExists):
+            self._subscriber.create_subscription(
+                request={"name": self._subscription_path, "topic": self._topic_path}
+            )
+
+    def _publish_order_event(self, payload: dict) -> str:
+        future = self._publisher.publish(self._topic_path, json.dumps(payload).encode("utf-8"))
+        return future.result(timeout=5.0)
+
+    def _pull_pending_events(self, *, timeout_s: float = 5.0, max_messages: int = 50) -> list[dict]:
+        """Pull messages, ack each, decode JSON, return the list of payloads."""
+        response = self._subscriber.pull(
+            request={
+                "subscription": self._subscription_path,
+                "max_messages": max_messages,
+            },
+            timeout=timeout_s,
+        )
+        payloads: list[dict] = []
+        ack_ids: list[str] = []
+        for received in response.received_messages:
+            payloads.append(json.loads(received.message.data.decode("utf-8")))
+            ack_ids.append(received.ack_id)
+        if ack_ids:
+            self._subscriber.acknowledge(
+                request={"subscription": self._subscription_path, "ack_ids": ack_ids}
+            )
+        return payloads

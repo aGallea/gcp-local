@@ -45,15 +45,23 @@ def test_gcs_invoice_upload(pipeline: OrderPipeline) -> None:
 
 def test_bigquery_insert_and_select(pipeline: OrderPipeline) -> None:
     import datetime
+    import uuid
 
+    order_id = f"bq-test-{uuid.uuid4().hex[:8]}"
     pipeline._insert_event(
-        order_id="bq-test-1",
+        order_id=order_id,
         customer="alice",
         amount=42.5,
         item="widget",
         ts=datetime.datetime(2026, 5, 2, 12, 0, 0, tzinfo=datetime.UTC),
     )
-    rows = pipeline._select_events_for_order("bq-test-1")
+    rows = pipeline._select_events_for_order(order_id)
     assert len(rows) == 1
     assert rows[0]["customer"] == "alice"
     assert float(rows[0]["amount"]) == 42.5
+
+
+def test_pubsub_publish_and_pull(pipeline: OrderPipeline) -> None:
+    pipeline._publish_order_event({"order_id": "ps-test-1", "status": "pending"})
+    pulled = pipeline._pull_pending_events(timeout_s=2.0)
+    assert any(msg.get("order_id") == "ps-test-1" for msg in pulled)
