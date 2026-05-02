@@ -183,6 +183,7 @@ for doc in db.collection("users").where(
 ## Documentation map
 
 - **Use a service** — [`docs/services/`](docs/services/) (one file per service: BigQuery, GCS, Secret Manager, Pub/Sub, Firestore).
+- **End-to-end example** — [`examples/order-pipeline/`](examples/order-pipeline/) (uses all five services together; runs as the CI e2e test).
 - **Run / deploy** — [`docs/deployment.md`](docs/deployment.md).
 - **Architecture & internals** — [`docs/architecture/overview.md`](docs/architecture/overview.md) and the per-service files alongside it.
 - **Roadmap** — [`ROADMAP.md`](ROADMAP.md).

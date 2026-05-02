@@ -1,0 +1,32 @@
+name: e2e
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Start gcp-local via docker compose
+        run: docker compose -f examples/order-pipeline/docker-compose.yml up -d --build --wait
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Run e2e tests
+        run: pytest examples/order-pipeline/test_e2e.py -v
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose -f examples/order-pipeline/docker-compose.yml logs --no-color
+      - name: Tear down
+        if: always()
+        run: docker compose -f examples/order-pipeline/docker-compose.yml down -v
