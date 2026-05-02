@@ -133,6 +133,53 @@ print(
 )
 ```
 
+### Pub/Sub
+
+```python
+import os
+from google.cloud import pubsub_v1
+
+os.environ["PUBSUB_EMULATOR_HOST"] = "localhost:8085"
+
+publisher = pubsub_v1.PublisherClient()
+topic_path = publisher.topic_path("my-project", "my-topic")
+publisher.create_topic(request={"name": topic_path})
+
+subscriber = pubsub_v1.SubscriberClient()
+sub_path = subscriber.subscription_path("my-project", "my-sub")
+subscriber.create_subscription(request={"name": sub_path, "topic": topic_path})
+
+publisher.publish(topic_path, b"hello from gcp-local").result()
+
+response = subscriber.pull(request={"subscription": sub_path, "max_messages": 1})
+for received in response.received_messages:
+    print(received.message.data)
+    subscriber.acknowledge(
+        request={"subscription": sub_path, "ack_ids": [received.ack_id]}
+    )
+```
+
+### Firestore
+
+```python
+import os
+from google.cloud import firestore
+
+os.environ["FIRESTORE_EMULATOR_HOST"] = "localhost:8080"
+
+db = firestore.Client(project="my-project")
+db.collection("users").document("alice").set({"name": "Alice", "score": 0})
+db.collection("users").document("alice").update({"score": firestore.Increment(1)})
+
+snap = db.collection("users").document("alice").get()
+print(snap.to_dict())  # {'name': 'Alice', 'score': 1}
+
+for doc in db.collection("users").where(
+    filter=firestore.FieldFilter("score", ">", 0)
+).stream():
+    print(doc.id, doc.to_dict())
+```
+
 ## Documentation map
 
 - **Use a service** — [`docs/services/`](docs/services/) (one file per service: BigQuery, GCS, Secret Manager, Pub/Sub, Firestore).
