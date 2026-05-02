@@ -30,6 +30,10 @@ Releases are managed by [release-please](https://github.com/googleapis/release-p
 
 ## [Unreleased]
 
+### Added
+
+- **Pub/Sub:** push subscriptions now deliver. When `Subscription.pushConfig.pushEndpoint` is set, the emulator POSTs each published message to the endpoint as a wrapped JSON envelope (`{message: {data, attributes, messageId, publishTime, orderingKey}, subscription}`). 2xx acks the message; anything else (non-2xx, connection error, 30 s timeout) NACKs and the existing ack-deadline redelivery sweeper redrives. `UpdateSubscription` with the `push_config` mask hot-swaps the pump endpoint or flips push↔pull. `oidcToken`, `retryPolicy` backoff, `pushConfig.attributes`, and `noWrapper` remain deferred — see [`docs/services/pubsub.md`](docs/services/pubsub.md).
+
 ## [0.1.0] — 2026-05-01
 
 The first managed release. Captures everything that landed up to and including the Firestore service (PR #14) and the GHCR container-image publishing pipeline (PR #15). Future releases are managed by release-please from Conventional Commits going forward.

@@ -36,6 +36,7 @@ class PubSubStorage(Protocol):
     async def list_subscriptions(self, project: str) -> list[SubscriptionRecord]: ...
     async def append_message(self, project: str, topic_id: str, msg: MessageRecord) -> int: ...
     async def get_messages(self, project: str, topic_id: str) -> list[MessageRecord]: ...
+    def get_messages_sync(self, project: str, topic_id: str) -> list[MessageRecord]: ...
     async def reset(self) -> None: ...
 
 
@@ -143,6 +144,15 @@ class InMemoryStorage:
     async def get_messages(self, project: str, topic_id: str) -> list[MessageRecord]:
         async with self._lock:
             return list(self._messages.get((project, topic_id), []))
+
+    def get_messages_sync(self, project: str, topic_id: str) -> list[MessageRecord]:
+        """Non-async accessor used by the push pump's tight loop.
+
+        Returns a snapshot copy of the message list. Skipping the asyncio
+        lock is safe here because list ``append`` is atomic under CPython
+        and we copy the list before iterating in the caller.
+        """
+        return list(self._messages.get((project, topic_id), []))
 
     async def reset(self) -> None:
         async with self._lock:

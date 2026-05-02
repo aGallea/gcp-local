@@ -14,6 +14,8 @@ Each call to `place_order(...)` exercises five services:
 
 `confirm_pending_orders()` pulls those messages and updates each Firestore doc to `status: confirmed`. `daily_totals()` runs a SQL aggregate against BigQuery.
 
+The e2e test suite also covers **Pub/Sub push subscriptions** end-to-end: it spins up an in-process HTTP server on the host and registers a push subscription targeting `host.docker.internal:<port>/push`. The emulator (running inside the container) POSTs the wrapped JSON envelope to it; the test asserts payload shape and the absence of redelivery after a 2xx response. This requires Docker's `host-gateway` mapping, which is wired in `docker-compose.yml`.
+
 ## Prerequisites
 
 - Docker (with `docker compose`) and Python 3.13+.

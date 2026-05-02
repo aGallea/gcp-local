@@ -38,7 +38,6 @@ Default port: **8085** (the canonical Pub/Sub emulator port). The wire protocol 
 
 The fields below are accepted on the wire (so client validation does not fail) and stored on the resource — but the emulator does not act on them:
 
-- **`Subscription.pushConfig`** — stored and returned by `GetSubscription`, but no HTTP delivery loop runs. Push subscriptions are inert in v1.
 - **`Subscription.filter`** — stored, never evaluated. Every published message is delivered to every matching subscription regardless of the filter expression.
 - **`Subscription.deadLetterPolicy`** — stored, never triggered. Messages do not move to a dead-letter topic after N redeliveries.
 - **`Subscription.retryPolicy`** — stored. The emulator uses a fixed 1-second redelivery sweep regardless of `minimumBackoff` / `maximumBackoff`.
@@ -275,6 +274,68 @@ subscriber.seek(request={"subscription": sub_path, "time": checkpoint})
 
 ---
 
+## Push subscriptions
+
+The emulator delivers messages to subscriptions configured with `push_config.push_endpoint`. When a message lands on the topic, a per-subscription background pump POSTs a JSON envelope matching real Pub/Sub's wire format to the endpoint:
+
+```json
+{
+  "message": {
+    "data": "<base64>",
+    "attributes": { "region": "us-east1" },
+    "messageId": "events-1",
+    "publishTime": "2026-05-02T12:00:00Z",
+    "orderingKey": "user-42"
+  },
+  "subscription": "projects/<p>/subscriptions/<s>"
+}
+```
+
+`attributes` is omitted when the published message has none; `orderingKey` is omitted when empty. The request is `POST` with `Content-Type: application/json` and `User-Agent: gcp-local-pubsub-push/0`.
+
+**Acks via HTTP status:**
+
+- `2xx` → message acked.
+- Non-`2xx`, connection error, or timeout (default 30 s) → message NACKed; the existing ack-deadline redelivery sweeper redrives on the next pump tick.
+
+**Per-subscription serial delivery.** The pump sends one message at a time. Two messages with the same `orderingKey` are delivered in publish order: the second waits until the first is acked. Across different ordering keys (or with ordering disabled), the pump still serializes per subscription — real Pub/Sub may parallelize, but the emulator does not.
+
+**Endpoint changes.** `UpdateSubscription` with `push_config` in the field mask hot-swaps the pump: clearing `push_endpoint` stops delivery; pointing at a new URL restarts the pump targeting the new endpoint. The same field mask supports flipping a pull subscription into a push subscription and back.
+
+**Not emitted (deferred):**
+
+- `pushConfig.oidcToken` — stored on the resource, but no `Authorization` header is added to the POST. Real Pub/Sub signs a JWT here.
+- `pushConfig.attributes` — stored, but not echoed back as HTTP headers (`x-goog-version` etc.).
+- `subscription.retryPolicy.minimumBackoff` / `maximumBackoff` — stored, not honored. NACK redelivers on the next pump tick (no exponential backoff).
+- `noWrapper` mode — always send the wrapped envelope.
+
+### Quickstart
+
+```python
+from google.cloud import pubsub_v1
+
+publisher = pubsub_v1.PublisherClient()
+subscriber = pubsub_v1.SubscriberClient()
+
+topic_path = publisher.topic_path("my-project", "events")
+sub_path = subscriber.subscription_path("my-project", "events-push-sub")
+
+publisher.create_topic(request={"name": topic_path})
+subscriber.create_subscription(
+    request={
+        "name": sub_path,
+        "topic": topic_path,
+        "push_config": {"push_endpoint": "http://localhost:9999/push"},
+        "ack_deadline_seconds": 10,
+    }
+)
+
+# Anything you publish from here onwards is POSTed to localhost:9999/push.
+publisher.publish(topic_path, b"hello", region="us-east1").result()
+```
+
+---
+
 ## Configuration
 
 | Environment variable | Default | Description |
@@ -306,8 +367,6 @@ Note: the reset endpoint is served by the admin API on port **4510**, not on the
 **Topic backlog grows unbounded.** Real Pub/Sub retains messages for up to 7 days; the emulator retains them until the process exits or every subscription has acked them. Long-running emulator processes that publish heavily will accumulate memory. Reset between tests, or restart the container if it matters.
 
 **Filters are not evaluated.** A subscription created with `filter='attributes.region = "us-east1"'` will receive every message, regardless of attributes. The filter string round-trips on `GetSubscription`, but it has no effect on delivery.
-
-**Push subscriptions are inert.** `pushConfig` is stored and returned by `GetSubscription`, but the emulator never POSTs to the push endpoint. Treat push-style subscriptions as pull subscriptions during local development.
 
 **Exactly-once delivery is downgraded to at-least-once.** `enable_exactly_once_delivery=True` is accepted, logged, and otherwise ignored. Plan for at-least-once redelivery in test code.
 

@@ -6,6 +6,8 @@
 **Core design:** [2026-04-24-gcp-local-core-design.md](./2026-04-24-gcp-local-core-design.md)
 **Related:** [2026-04-24-gcp-local-secret-manager-design.md](./2026-04-24-gcp-local-secret-manager-design.md) — gRPC service template.
 
+> **Superseded in part (2026-05-02):** push subscriptions now actually deliver — see [`2026-05-02-pubsub-push-subscriptions-design.md`](./2026-05-02-pubsub-push-subscriptions-design.md). All "post-v1" / "no HTTP delivery loop" / "stored, never delivered to" / "Push subscriptions are no-ops" passages below are obsolete. The rest of this spec (storage model, ack-lease state machine, ordering-key gating, redelivery sweeper, StateHub integration) still applies.
+
 ## 1. Overview
 
 This document specifies the **Pub/Sub emulator** — the fourth real service in `gcp-local` and the second gRPC service after Secret Manager. Success criterion: the official `google-cloud-pubsub` Python client library works unchanged against the emulator for the Publisher + Subscriber APIs across topic CRUD, subscription CRUD, publish, unary `Pull`, `StreamingPull`, `Acknowledge`, `ModifyAckDeadline`, and `Seek` (to time).

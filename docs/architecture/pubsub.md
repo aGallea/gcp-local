@@ -77,7 +77,7 @@ class SubscriptionRecord:
     topic_id: str
     ack_deadline_seconds: int       # default 10
     enable_message_ordering: bool
-    push_config: dict | None        # stored, never delivered to
+    push_config: dict | None        # drives the push pump (engine/push.py)
     filter: str                      # stored, never evaluated
     dead_letter_policy: dict | None # accepted, no-op
     retry_policy: dict | None       # accepted, no-op
@@ -114,10 +114,10 @@ The servicer (`servicer.py`) splits into `PublisherServicer` and `SubscriberServ
 | `ListTopics` | `storage.list_topics` + shared `_paginate` (page size capped at 1000) |
 | `ListTopicSubscriptions` | `storage.list_topic_subscriptions` + shared `_paginate` |
 | `Publish` | `storage.append_messages` (under topic lock; mints `<topic_id>-<n>` IDs, stamps `publish_time = now()`); emits StateHub `pubsub.message.published` event; notifies every subscription's deliverable `asyncio.Event` |
-| `CreateSubscription` | `storage.create_subscription` (topic resolved before insert; `enable_exactly_once_delivery` logged + downgraded; `filter` / `pushConfig` stored verbatim) |
+| `CreateSubscription` | `storage.create_subscription` (topic resolved before insert; `enable_exactly_once_delivery` logged + downgraded; `filter` / `oidcToken` stored verbatim); when `pushConfig.push_endpoint` is set, `_ensure_pump` starts a `PushPump` (see "Push pump" below) |
 | `GetSubscription` | `storage.get_subscription` |
-| `UpdateSubscription` | `storage.update_subscription` (labels + `ackDeadlineSeconds` only) |
-| `DeleteSubscription` | `storage.delete_subscription` (drops cursor, leases, NACK queue, ordering-block set; cancels any sweeper task) |
+| `UpdateSubscription` | `storage.update_subscription` (labels + `ackDeadlineSeconds` + `pushConfig` honored from `update_mask`); `_ensure_pump` reconciles the per-subscription pump (start, stop, or hot-swap endpoint) |
+| `DeleteSubscription` | `storage.delete_subscription` (drops cursor, leases, NACK queue, ordering-block set; cancels any sweeper task and any push pump) |
 | `ListSubscriptions` | `storage.list_subscriptions` + `_paginate` |
 | `Pull` | `engine/backlog.py::pull` (see below) |
 | `StreamingPull` | `engine/streaming.py::streaming_pull_loop` (calls `backlog.pull` repeatedly; processes mid-stream `ack_ids`/`modify_deadline_*` deltas) |
@@ -239,6 +239,25 @@ async def seek_to_time(sub, t):
 
 `Seek(snapshot=…)` returns gRPC `UNIMPLEMENTED` — snapshots are post-v1.
 
+### Push pump (per-subscription)
+
+Subscriptions whose `push_config.push_endpoint` is non-empty get a background `PushPump` task in addition to their `SubscriptionBacklog`. The pump (in `engine/push.py`) is conceptually a synchronous client of the same backlog the pull/StreamingPull RPCs use:
+
+1. `pull(max_count=1)` to obtain the next deliverable message (or wait on `backlog.deliverable` when none is ready).
+2. POST the wrapped JSON envelope to `push_endpoint` over a per-pump `httpx.AsyncClient` (default 30 s timeout).
+3. On `2xx`, call `acknowledge([ack_id])`. On any other outcome (non-2xx, connection error, timeout), `modify_ack_deadline([(ack_id, 0)])` — a NACK that returns the message to the head of the backlog's NACK queue.
+
+The redelivery sweeper does not need to know the subscription is push-shaped: a NACK, an expired lease, or a pump crash all converge on the same code path. Pump lifecycle is driven by `SubscriberServicer._ensure_pump(rec)`:
+
+| Event | Pump action |
+|---|---|
+| `CreateSubscription` with `push_config.push_endpoint` | Start |
+| `UpdateSubscription` mask includes `push_config` | Stop old pump; start new (or stop only, if endpoint cleared) |
+| `DeleteSubscription` | Stop |
+| `PubSubService.stop()` / `reset_state()` | Stop all pumps before tearing down storage |
+
+`max_count=1` keeps delivery strictly serial per subscription, which makes ordering keys trivially correct (one in-flight POST at a time) and avoids batching/per-message-ack tracking on the wire side. Real Pub/Sub may parallelize push fan-out; we don't.
+
 ## StreamingPull session loop
 
 `engine/streaming.py::streaming_pull_loop` runs as an async generator over the subscription's deliverable Event. Layout:
@@ -265,7 +284,7 @@ Per-stream limits are read from the initial `StreamingPullRequest` and never re-
 }
 ```
 
-This is the local-only hook that test code uses to assert "the publisher actually published" without polling Pub/Sub. The future push-delivery work (post-v1) will subscribe to this same event internally rather than re-running publish-side logic.
+This is the local-only hook that test code uses to assert "the publisher actually published" without polling Pub/Sub. Push delivery does not consume this event — each push pump owns its own backlog cursor and is woken via `backlog.deliverable` (set by `Publish` and by NACK/sweeper redelivery), the same wakeup pull / StreamingPull use.
 
 There is no Pub/Sub-to-GCS or Pub/Sub-to-BigQuery wiring in v1 — the StateHub plumbing is in place, but the actual subscription types are deferred.
 
@@ -304,15 +323,17 @@ Statuses are produced via `await context.abort(grpc.StatusCode.X, message)` insi
 | `test_seek.py` | Seek-to-time rewinds the cursor, drops in-flight leases, clears NACK queue, clears ordering blocks. |
 | `test_errors.py` | Error-envelope shapes for each `(internal exception → grpc code)` row. |
 | `test_backlog.py` | Engine-level coverage of the per-subscription state machine in isolation. |
+| `test_push.py` | `PushPump` payload envelope, ack-on-2xx, NACK-on-5xx and timeout, ordering-key serialization, lifecycle + servicer wiring (Create/Update/Delete) + service-level teardown. |
 | `test_service_scaffold.py` | `Service` protocol wiring (`start` / `stop` / `health` / `reset`); port resolution; persist-flag log line. |
 
-**Integration tests** in `tests/integration/test_pubsub_integration.py` start the emulator in-process and drive it with the real `google-cloud-pubsub` Python client over a live gRPC channel. The five cases cover:
+**Integration tests** in `tests/integration/test_pubsub_integration.py` start the emulator in-process and drive it with the real `google-cloud-pubsub` Python client over a live gRPC channel. Cases:
 
 1. Full publisher + subscriber lifecycle (create topic + subscription, publish 100 messages, pull-and-ack all).
 2. StreamingPull via `subscriber.subscribe(callback)` with a real `Future` returned by the client.
 3. Ordering keys via `PublisherOptions(enable_message_ordering=True)`.
 4. Seek-to-time round-trip.
 5. Resource-not-found and duplicate-create error mapping.
+6. Push delivery to a local `aiohttp` server: payload envelope shape end-to-end + NACK redelivery on `500`-then-`204`.
 
 The existing `emulator` fixture in `tests/integration/conftest.py` is extended to include `pubsub` in the default service list.
 
@@ -323,7 +344,8 @@ These are the gaps a consumer should know about. User-visible "what's not emulat
 - **In-memory only**, even with `PERSIST=1`. Topics, subscriptions, message backlogs, and subscription cursors are lost across restarts. The service logs an info-level line at startup so the user knows. Disk persistence is mechanical to add later if a workflow needs it.
 - **Topic backlog grows unbounded** for the process lifetime. Real Pub/Sub retains messages for up to 7 days; the emulator retains until the process exits or every subscription has acked them. Reset between tests, or restart the container.
 - **Filters are not evaluated.** Every published message is delivered to every matching subscription regardless of `Subscription.filter`. The string round-trips on `GetSubscription` but has no effect.
-- **Push subscriptions are no-ops.** `pushConfig` is stored and reflected on `GetSubscription`, but the emulator never POSTs to the URL. Push delivery requires an outbound HTTP loop with retry/backoff, deferred to post-v1.
+- **`retryPolicy` backoff is not honored for push delivery.** A NACKed push message is redelivered on the next pump tick rather than after `minimumBackoff`/`maximumBackoff`. Closing this gap would apply uniformly to pull and push (the existing redelivery sweeper would also need to honor it), so it remains a separate follow-up.
+- **`pushConfig.oidcToken` is stored but not emitted.** Real Pub/Sub signs a JWT and adds an `Authorization: Bearer` header; the emulator does not. Workflows that depend on receiver-side JWT verification cannot test that path against the emulator.
 - **Exactly-once delivery is downgraded to at-least-once.** `enableExactlyOnceDelivery=true` is accepted on the wire, logged, and otherwise ignored. There is no client-side dedup, no message-id-based suppression on redelivery, and `ModifyAckDeadlineConfirmation` is not emitted.
 - **Single-process delivery.** The whole emulator runs in one Python process; horizontal scale-out is not relevant. All locks are `asyncio.Lock`s, not OS-level mutexes — no leader election, no shared state across replicas.
 - **`messageId` shape is `<topic_id>-<n>`** (monotonic per topic), not the opaque 16+ digit IDs the real service mints. Callers that assert on the exact ID shape will need to relax that assertion.

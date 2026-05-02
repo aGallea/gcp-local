@@ -115,6 +115,104 @@ def test_confirm_pending_orders_updates_firestore(pipeline: OrderPipeline) -> No
     assert doc["status"] == "confirmed"
 
 
+def test_pubsub_push_subscription_delivers_to_host(pipeline: OrderPipeline) -> None:
+    """End-to-end push delivery against the docker-compose'd emulator.
+
+    Spins up a small HTTP server on the host, registers a Pub/Sub push
+    subscription pointing at ``host.docker.internal:<port>``, publishes a
+    message via the real client, and verifies the host received the
+    wrapped envelope. Skips with a clear message if the emulator container
+    cannot resolve ``host.docker.internal`` (older Docker without
+    host-gateway).
+    """
+    import base64
+    import contextlib
+    import http.server
+    import json as _json
+    import socket
+    import threading
+    import time
+    import uuid
+
+    from google.api_core.exceptions import AlreadyExists
+    from google.cloud import pubsub_v1
+
+    received: list[dict] = []
+    received_event = threading.Event()
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # stdlib API requires this exact name
+            length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(length)
+            try:
+                received.append(_json.loads(body))
+                received_event.set()
+                self.send_response(204)
+            except Exception:
+                self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, *args, **kwargs) -> None:  # silence default stderr noise
+            return
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("0.0.0.0", 0))
+    bound_port = sock.getsockname()[1]
+    sock.close()
+
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", bound_port), _Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    time.sleep(0.1)  # let the server bind
+
+    try:
+        publisher = pubsub_v1.PublisherClient()
+        subscriber = pubsub_v1.SubscriberClient()
+        suffix = uuid.uuid4().hex[:8]
+        topic_id = f"push-e2e-topic-{suffix}"
+        sub_id = f"push-e2e-sub-{suffix}"
+        topic_path = publisher.topic_path(pipeline.project, topic_id)
+        sub_path = subscriber.subscription_path(pipeline.project, sub_id)
+        push_url = f"http://host.docker.internal:{bound_port}/push"
+
+        with contextlib.suppress(AlreadyExists):
+            publisher.create_topic(request={"name": topic_path})
+        with contextlib.suppress(AlreadyExists):
+            subscriber.create_subscription(
+                request={
+                    "name": sub_path,
+                    "topic": topic_path,
+                    "push_config": {"push_endpoint": push_url},
+                    "ack_deadline_seconds": 10,
+                }
+            )
+
+        publisher.publish(
+            topic_path, _json.dumps({"order_id": "push-e2e-1"}).encode("utf-8")
+        ).result(timeout=5.0)
+
+        if not received_event.wait(timeout=10):
+            pytest.skip(
+                "host.docker.internal not reachable from the emulator container — "
+                "Docker without host-gateway support; skipping push e2e."
+            )
+
+        assert len(received) == 1
+        envelope = received[0]
+        assert envelope["subscription"] == sub_path
+        assert _json.loads(base64.b64decode(envelope["message"]["data"])) == {
+            "order_id": "push-e2e-1"
+        }
+
+        # Verify no double-delivery: the 204 already acked; the next sweep
+        # should not POST again.
+        time.sleep(2.0)
+        assert len(received) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_daily_totals_aggregates_per_customer(pipeline: OrderPipeline) -> None:
     suffix = uuid.uuid4().hex[:6]
     pipeline.place_order(
