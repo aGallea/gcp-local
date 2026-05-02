@@ -4,6 +4,22 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.2.0](https://github.com/aGallea/gcp-local/compare/v0.1.0...v0.2.0) (2026-05-02)
+
+
+### Added
+
+* **examples:** add main.py narrated demo ([a36e9ce](https://github.com/aGallea/gcp-local/commit/a36e9ce42a910c67d62c9fb1946e5fab1cabfd20))
+* **examples:** add order-pipeline e2e example + CI workflow ([6b24239](https://github.com/aGallea/gcp-local/commit/6b24239d2105dc2e1f0cda3b632d6e64edb1596f))
+* **examples:** OrderPipeline.__init__ with wait-for-ready ([5e75a63](https://github.com/aGallea/gcp-local/commit/5e75a63bbbe6eb1c408c7d8eebc97bb6daf51c87))
+* **examples:** place_order + confirm_pending_orders + daily_totals ([8cc1c4d](https://github.com/aGallea/gcp-local/commit/8cc1c4dfb75a47aa43832f00ed13f1ed8611ab9a))
+* **examples:** scaffold order-pipeline directory with docker-compose ([b088840](https://github.com/aGallea/gcp-local/commit/b08884020ecee50173c11878222fd08ee49d8dc2))
+* **examples:** seed payment-api-key via Secret Manager ([9205fff](https://github.com/aGallea/gcp-local/commit/9205fff069800124eb0d8f4466a21d449929d9f4))
+* **examples:** wire BigQuery dataset + insert/select helpers ([b1085af](https://github.com/aGallea/gcp-local/commit/b1085afd3caa625017fa9d8fd6b3f43f701c8574))
+* **examples:** wire Firestore client + order-doc helpers ([12b3fee](https://github.com/aGallea/gcp-local/commit/12b3fee67e1c716ed940628901c49fa0158b65ee))
+* **examples:** wire GCS bucket + invoice upload helpers ([dd8225d](https://github.com/aGallea/gcp-local/commit/dd8225d56b43b2ddbfbb91a38f4b64b63185e0dc))
+* **examples:** wire Pub/Sub topic + publish/pull helpers ([dae4e09](https://github.com/aGallea/gcp-local/commit/dae4e09e3dc9159a821cd913d49cd5b92ffcfc90))
+
 ## [Unreleased]
 
 ## [0.1.0] — 2026-05-01
