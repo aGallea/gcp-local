@@ -15,6 +15,12 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Must be a PAT (or GitHub App token), NOT GITHUB_TOKEN. GitHub's
+          # recursion guard suppresses workflow runs from any event whose
+          # actor is GITHUB_TOKEN — including the release: published and
+          # push: tags events that release-please fires when it cuts a
+          # release. Using a PAT means the v* tag push triggers ci.yml's
+          # publish-image job and `:vX.Y.Z` lands in ghcr automatically.
+          token: ${{ secrets.RELEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
