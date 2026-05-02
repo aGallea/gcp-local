@@ -4,6 +4,14 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.2.1](https://github.com/aGallea/gcp-local/compare/v0.2.0...v0.2.1) (2026-05-02)
+
+
+### Fixed
+
+* **ci:** release-please uses RELEASE_TOKEN PAT so tag pushes trigger publish-image ([2ee35fb](https://github.com/aGallea/gcp-local/commit/2ee35fb565bc3a73c27d892cef98987b6904a472))
+* **ci:** release-please uses RELEASE_TOKEN so tag pushes trigger publish-image ([b37e89b](https://github.com/aGallea/gcp-local/commit/b37e89b2440b808acd131444ef010dced2063f1b))
+
 ## [0.2.0](https://github.com/aGallea/gcp-local/compare/v0.1.0...v0.2.0) (2026-05-02)
 
 
