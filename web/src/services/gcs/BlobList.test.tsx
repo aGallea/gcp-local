@@ -81,6 +81,77 @@ describe("BlobList", () => {
     );
   });
 
+  it("creates a folder via the dialog and refreshes", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        bucket: "b",
+        prefix: "",
+        blobs: [],
+        folders: [],
+        next_page_token: null,
+      })
+      .mockResolvedValueOnce({
+        bucket: "b",
+        prefix: "",
+        blobs: [],
+        folders: ["new/"],
+        next_page_token: null,
+      });
+    const upload = vi.fn().mockResolvedValue({
+      name: "new/",
+      size: 0,
+      content_type: "application/x-directory",
+      updated: "t",
+      generation: 1,
+    });
+    const api = mkApi({ listBlobs: list, uploadBlob: upload });
+    renderAt("/gcs/buckets/b", api);
+    await userEvent.click(await screen.findByRole("button", { name: /create folder/i }));
+    await userEvent.type(screen.getByLabelText(/name/i), "new");
+    // Multiple "Create" buttons exist (the header CTA + the dialog confirm).
+    // Click the last one (the dialog's confirm).
+    const createButtons = screen.getAllByRole("button", { name: /^create$/i });
+    await userEvent.click(createButtons[createButtons.length - 1]);
+    await waitFor(() => expect(upload).toHaveBeenCalled());
+    const args = upload.mock.calls[0];
+    expect(args[0]).toBe("b");
+    expect(args[1]).toBeInstanceOf(File);
+    expect(args[2]).toBe("new/");
+    await waitFor(() => expect(screen.getByText(/new\//)).toBeInTheDocument());
+  });
+
+  it("hides the placeholder object when listing inside a folder", async () => {
+    const api = mkApi({
+      listBlobs: vi.fn().mockResolvedValue({
+        bucket: "b",
+        prefix: "logs/",
+        blobs: [
+          {
+            name: "logs/",
+            size: 0,
+            content_type: "application/x-directory",
+            updated: "t",
+            generation: 1,
+          },
+          {
+            name: "logs/a.log",
+            size: 1,
+            content_type: "text/plain",
+            updated: "t",
+            generation: 1,
+          },
+        ],
+        folders: [],
+        next_page_token: null,
+      }),
+    });
+    renderAt("/gcs/buckets/b?prefix=logs/", api);
+    await waitFor(() => expect(screen.getByText(/a\.log/)).toBeInTheDocument());
+    // The placeholder row "logs/" should not appear as a file row.
+    expect(screen.queryByText("📄 ")).toBeNull();
+  });
+
   it("deletes a blob via the confirm dialog and refreshes", async () => {
     const list = vi
       .fn()

@@ -7,3 +7,6 @@
 .link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; }
 .delete { background: none; border: none; color: var(--danger); cursor: pointer; }
 .upload { padding: 6px 14px; border-radius: 6px; background: var(--accent); color: white; border: none; cursor: pointer; }
+.actions { display: flex; gap: 8px; }
+.secondary { padding: 6px 14px; border-radius: 6px; background: white; color: var(--fg); border: 1px solid var(--border); cursor: pointer; }
+.secondary:hover { background: var(--row-alt); }

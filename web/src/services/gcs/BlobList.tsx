@@ -9,6 +9,7 @@ import { useAsync } from "../../hooks/useAsync";
 
 import { BlobPreview } from "./BlobPreview";
 import { BlobUploadDialog } from "./BlobUploadDialog";
+import { CreateFolderDialog } from "./CreateFolderDialog";
 import styles from "./BlobList.module.css";
 
 interface Props {
@@ -27,6 +28,8 @@ export function BlobList({ api }: Props) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [previewName, setPreviewName] = useState<string | null>(null);
+  const [createFolderOpen, setCreateFolderOpen] = useState(false);
+  const [createFolderError, setCreateFolderError] = useState<Error | null>(null);
 
   const goTo = (newPrefix: string) => {
     const next = new URLSearchParams(params);
@@ -47,6 +50,21 @@ export function BlobList({ api }: Props) {
     await blobs.refresh();
   };
 
+  const handleCreateFolder = async (folderName: string) => {
+    setCreateFolderError(null);
+    try {
+      const trimmed = folderName.replace(/\/+$/, "");
+      const placeholder = new File([new Uint8Array(0)], "", {
+        type: "application/x-directory",
+      });
+      await api.uploadBlob(bucket, placeholder, prefix + trimmed + "/");
+      setCreateFolderOpen(false);
+      await blobs.refresh();
+    } catch (e) {
+      setCreateFolderError(e instanceof Error ? e : new Error(String(e)));
+    }
+  };
+
   if (blobs.status === "loading" || blobs.status === "idle") {
     return <div>Loading…</div>;
   }
@@ -55,7 +73,8 @@ export function BlobList({ api }: Props) {
   }
 
   const data = blobs.data!;
-  const empty = data.blobs.length === 0 && data.folders.length === 0;
+  const visibleBlobs = data.blobs.filter((b) => b.name !== prefix);
+  const empty = visibleBlobs.length === 0 && data.folders.length === 0;
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
@@ -76,16 +95,19 @@ export function BlobList({ api }: Props) {
             {prefix ? ` / ${prefix}` : ""}
           </span>
         </div>
-        <button onClick={() => setUploadOpen(true)} className={styles.upload}>
-          Upload
-        </button>
+        <div className={styles.actions}>
+          <button onClick={() => setCreateFolderOpen(true)} className={styles.secondary}>
+            Create folder
+          </button>
+          <button onClick={() => setUploadOpen(true)} className={styles.upload}>
+            Upload
+          </button>
+        </div>
       </header>
       {empty ? (
         <EmptyState
           title="This folder is empty"
-          description="Upload a file to get started."
-          actionLabel="Upload"
-          onAction={() => setUploadOpen(true)}
+          description="Upload a file or create a folder."
         />
       ) : (
         <table className={styles.table}>
@@ -118,7 +140,7 @@ export function BlobList({ api }: Props) {
                 <td colSpan={4}></td>
               </tr>
             ))}
-            {data.blobs.map((b) => (
+            {visibleBlobs.map((b) => (
               <tr key={b.name}>
                 <td>
                   <button onClick={() => setPreviewName(b.name)} className={styles.link}>
@@ -153,6 +175,12 @@ export function BlobList({ api }: Props) {
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
         onUpload={handleUpload}
+      />
+      <CreateFolderDialog
+        open={createFolderOpen}
+        onClose={() => setCreateFolderOpen(false)}
+        onSubmit={handleCreateFolder}
+        error={createFolderError}
       />
       {previewName && (
         <BlobPreview
