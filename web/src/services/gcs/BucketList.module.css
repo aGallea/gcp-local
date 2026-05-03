@@ -1,0 +1,6 @@
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.create { padding: 6px 14px; border-radius: 6px; background: var(--accent); color: white; border: none; cursor: pointer; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.table th { background: var(--row-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.delete { background: none; border: none; color: var(--danger); cursor: pointer; }
