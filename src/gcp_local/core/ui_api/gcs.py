@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from gcp_local.core.lifecycle import Lifecycle
 from gcp_local.core.ui_api.errors import UiApiError
 from gcp_local.services.gcs.storage import (
+    BucketAlreadyExists,
     BucketNotFound,  # noqa: F401  -- used by endpoints in subsequent tasks
     GcsStorage,
 )
@@ -123,6 +124,42 @@ def build_gcs_router() -> APIRouter:
                 )
                 for b in buckets
             ],
+        )
+
+    @router.post(
+        "/buckets",
+        response_model=BucketSummary,
+        status_code=201,
+    )
+    async def create_bucket(payload: CreateBucketRequest, storage: StorageDep) -> BucketSummary:
+        if not payload.name.strip():
+            raise UiApiError(
+                status_code=400,
+                code="invalid_argument",
+                message="bucket name must not be empty",
+            )
+        from datetime import UTC, datetime
+
+        from gcp_local.services.gcs.models import BucketMeta
+
+        meta = BucketMeta(
+            name=payload.name,
+            time_created=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            location=payload.location,
+        )
+        try:
+            await storage.create_bucket(meta)
+        except BucketAlreadyExists:
+            raise UiApiError(
+                status_code=409,
+                code="already_exists",
+                message=f"bucket '{payload.name}' already exists",
+            ) from None
+        return BucketSummary(
+            name=meta.name,
+            location=meta.location,
+            storage_class=meta.storage_class,
+            time_created=meta.time_created,
         )
 
     return router
