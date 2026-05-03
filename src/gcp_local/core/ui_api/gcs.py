@@ -109,4 +109,20 @@ StorageDep = Annotated[GcsStorage, Depends(_storage_dep)]
 
 def build_gcs_router() -> APIRouter:
     router = APIRouter(prefix="/gcs", tags=["gcs"])
+
+    @router.get("/buckets", response_model=BucketList)
+    async def list_buckets(storage: StorageDep) -> BucketList:
+        buckets = await storage.list_buckets()
+        return BucketList(
+            buckets=[
+                BucketSummary(
+                    name=b.name,
+                    location=b.location,
+                    storage_class=b.storage_class,
+                    time_created=b.time_created,
+                )
+                for b in buckets
+            ],
+        )
+
     return router
