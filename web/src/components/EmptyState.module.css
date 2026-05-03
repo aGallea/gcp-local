@@ -1,0 +1,5 @@
+.empty { text-align: center; padding: 48px 24px; color: var(--muted); }
+.title { color: var(--fg); margin-bottom: 8px; }
+.desc { margin-bottom: 16px; }
+.action { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--accent); color: white; cursor: pointer; }
+.action:hover { opacity: 0.9; }
