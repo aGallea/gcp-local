@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from gcp_local.core.lifecycle import Lifecycle
+from gcp_local.core.ui_api.gcs import build_gcs_router
 from gcp_local.core.ui_api.schemas import PortInfo, ServiceInfo, ServiceList
 
 # Services that have a UI surface in this release. Extended as follow-up specs land.
@@ -25,4 +26,5 @@ def build_ui_api_router(lc: Lifecycle) -> APIRouter:
             ],
         )
 
+    router.include_router(build_gcs_router())
     return router

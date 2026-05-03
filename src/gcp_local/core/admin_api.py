@@ -10,6 +10,7 @@ from gcp_local.core.ui_api.router import build_ui_api_router
 
 def build_admin_app(lc: Lifecycle) -> FastAPI:
     app = FastAPI(title="gcp-local admin API", version="0.0.1")
+    app.state.lifecycle = lc
     register_error_handlers(app)
 
     @app.get("/_emulator/health")
