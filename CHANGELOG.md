@@ -4,6 +4,20 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.3.0](https://github.com/aGallea/gcp-local/compare/v0.2.1...v0.3.0) (2026-05-03)
+
+
+### Added
+
+* **pubsub:** deliver push subscriptions via HTTP POST ([2b47783](https://github.com/aGallea/gcp-local/commit/2b47783ef1035c8d0e8aca42c1defac2247df2ee))
+* **pubsub:** deliver push subscriptions via HTTP POST ([54ad644](https://github.com/aGallea/gcp-local/commit/54ad644bd574d515cf00946ee68bdbad078b0406))
+
+
+### Fixed
+
+* **gcs:** wire-serialize int64/uint64 fields as JSON strings ([9b43613](https://github.com/aGallea/gcp-local/commit/9b43613a457a4a7f2ed04efe6112e53d3c02de01))
+* **gcs:** wire-serialize int64/uint64 fields as JSON strings ([d4711aa](https://github.com/aGallea/gcp-local/commit/d4711aa8b24eda76d29a7a262d84d1374812aebc))
+
 ## [0.2.1](https://github.com/aGallea/gcp-local/compare/v0.2.0...v0.2.1) (2026-05-02)
 
 
