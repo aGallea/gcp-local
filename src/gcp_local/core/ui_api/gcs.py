@@ -389,4 +389,17 @@ def build_gcs_router() -> APIRouter:
             preview=preview,
         )
 
+    @router.delete("/buckets/{bucket}/blobs/{name:path}", status_code=204)
+    async def delete_blob(bucket: str, name: str, storage: StorageDep) -> Response:
+        try:
+            await storage.get_object(bucket, name)
+        except (BucketNotFound, ObjectNotFound):
+            raise UiApiError(
+                status_code=404,
+                code="not_found",
+                message=f"blob '{name}' not found in bucket '{bucket}'",
+            ) from None
+        await storage.delete_object(bucket, name)
+        return Response(status_code=204)
+
     return router
