@@ -331,19 +331,27 @@ class DiskStorage:
     # --- objects --------------------------------------------------------
 
     def _ensure_no_collision(self, bucket: str, name: str) -> None:
-        """Walk ancestor segments; if any exists as a file (object), collide.
+        """Walk ancestor segments; if any exists as a real object (a file with
+        a ``.meta.json`` sidecar), collide.
 
-        Also if `name` itself exists as a directory (because a child object exists), collide.
+        Also if the disk path of ``name`` itself exists as a directory
+        (because a child object exists), collide. Trailing ``/`` is stripped
+        before walking ancestors — for placeholder objects the name has no
+        ancestors of its own.
+
+        Orphan bytes-only files (no sidecar) are not real objects and do not
+        trigger collisions; they are silently ignored everywhere.
         """
         root = self._objects_root(bucket)
-        parts = name.split("/")
+        parts = name.rstrip("/").split("/")
         for i in range(1, len(parts)):
             candidate = root / "/".join(parts[:i])
-            if candidate.exists() and candidate.is_file():
+            sidecar = candidate.with_name(candidate.name + self._META_SUFFIX)
+            if candidate.exists() and candidate.is_file() and sidecar.exists():
                 raise ObjectCollision(
                     f"object {'/'.join(parts[:i])!r} exists; cannot write object under that prefix"
                 )
-        target = root / name
+        target = root / self._disk_object_name(name)
         if target.exists() and target.is_dir():
             raise ObjectCollision(f"cannot write object {name!r}: a directory exists at that path")
 

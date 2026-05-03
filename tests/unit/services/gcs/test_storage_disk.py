@@ -48,6 +48,24 @@ async def test_put_object_writes_bytes_and_sidecar(tmp_path: Path):
     assert json.loads(meta_file.read_text())["name"] == "dir/o.txt"
 
 
+async def test_orphan_bytes_file_does_not_block_placeholder_creation(tmp_path: Path):
+    """An orphan file at ``objects/foo`` (no sidecar) must not block creating
+    a folder placeholder named ``foo/`` — the placeholder lives at a different
+    disk path (``foo%2F``) and the collision check ignores orphans."""
+    s = DiskStorage(tmp_path)
+    await s.create_bucket(BucketMeta(name="b", time_created="t"))
+    # Drop an orphan bytes-only file with no sidecar.
+    (tmp_path / "b" / "objects" / "foo").write_bytes(b"x")
+    # Creating the folder placeholder ``foo/`` must succeed.
+    placeholder = make_record(name="foo/", size=0)
+    await s.put_object(placeholder, b"")
+    got = await s.get_object("b", "foo/")
+    assert got.name == "foo/"
+    # The orphan and the placeholder coexist; only the placeholder is listed.
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["foo/"]
+
+
 async def test_orphan_bytes_file_does_not_break_listing(tmp_path: Path):
     """An on-disk orphan (bytes file with no ``.meta.json`` sidecar — e.g.
     left behind by a crashed put_object) must not cause list_objects to 500.
