@@ -381,6 +381,15 @@ class DiskStorage:
             return names
         for p in root.rglob("*"):
             if p.is_file() and not p.name.endswith(self._META_SUFFIX):
+                # Defensive: only surface objects whose ``.meta.json`` sidecar
+                # actually exists. Orphan bytes-only files (left behind by a
+                # crashed put_object, an external rm, etc.) would otherwise
+                # 500 list_objects_with_prefixes when it tries to read the
+                # missing meta. Skip them silently — they're effectively
+                # invisible to the API.
+                meta = p.with_name(p.name + self._META_SUFFIX)
+                if not meta.exists():
+                    continue
                 rel = p.relative_to(root).as_posix()
                 names.append(self._logical_object_name(rel))
         return sorted(names)

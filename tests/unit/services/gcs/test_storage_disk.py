@@ -48,6 +48,20 @@ async def test_put_object_writes_bytes_and_sidecar(tmp_path: Path):
     assert json.loads(meta_file.read_text())["name"] == "dir/o.txt"
 
 
+async def test_orphan_bytes_file_does_not_break_listing(tmp_path: Path):
+    """An on-disk orphan (bytes file with no ``.meta.json`` sidecar — e.g.
+    left behind by a crashed put_object) must not cause list_objects to 500.
+    Skip silently."""
+    s = DiskStorage(tmp_path)
+    await s.create_bucket(BucketMeta(name="b", time_created="t"))
+    real = make_record(name="real.txt", size=3)
+    await s.put_object(real, b"abc")
+    # Manually drop an orphan bytes file with no sidecar.
+    (tmp_path / "b" / "objects" / "orphan").write_bytes(b"x")
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["real.txt"]
+
+
 async def test_object_with_trailing_slash_round_trips(tmp_path: Path):
     """Folder-placeholder objects (name ending in ``/``) are common in
     GCS-style UIs. The disk layout must not collide with the nested-directory
