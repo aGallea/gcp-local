@@ -1,0 +1,8 @@
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.back { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; margin-right: 16px; }
+.crumb { color: var(--muted); }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.table th { background: var(--row-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; }
+.delete { background: none; border: none; color: var(--danger); cursor: pointer; }
