@@ -5,14 +5,17 @@ Thin presenter layer over ``GcsStorage``. Returns UI-shaped responses
 Google wire-format that the public REST API on port 4443 emits.
 """
 
+import os
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
 from gcp_local.core.lifecycle import Lifecycle
 from gcp_local.core.ui_api.errors import UiApiError
+from gcp_local.services.gcs.models import BucketMeta, ObjectRecord
 from gcp_local.services.gcs.storage import (
     BucketAlreadyExists,
     BucketNotFound,
@@ -139,10 +142,6 @@ def build_gcs_router() -> APIRouter:
                 code="invalid_argument",
                 message="bucket name must not be empty",
             )
-        from datetime import UTC, datetime
-
-        from gcp_local.services.gcs.models import BucketMeta
-
         meta = BucketMeta(
             name=payload.name,
             time_created=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -236,6 +235,66 @@ def build_gcs_router() -> APIRouter:
             ],
             folders=sorted(prefixes),
             next_page_token=next_token,
+        )
+
+    @router.post(
+        "/buckets/{bucket}/blobs",
+        response_model=BlobSummary,
+        status_code=201,
+    )
+    async def upload_blob(
+        bucket: str,
+        storage: StorageDep,
+        file: UploadFile = File(...),  # noqa: B008 — FastAPI dependency marker
+        name: str | None = Form(default=None),
+    ) -> BlobSummary:
+        try:
+            await storage.get_bucket(bucket)
+        except BucketNotFound:
+            raise UiApiError(
+                status_code=404,
+                code="not_found",
+                message=f"bucket '{bucket}' not found",
+            ) from None
+
+        cap_mb = int(os.environ.get("GCP_LOCAL_UI_MAX_UPLOAD_MB", "100"))
+        cap_bytes = cap_mb * 1024 * 1024
+        data = await file.read()
+        if len(data) > cap_bytes:
+            raise UiApiError(
+                status_code=413,
+                code="payload_too_large",
+                message=f"upload exceeds {cap_mb} MB cap (set GCP_LOCAL_UI_MAX_UPLOAD_MB to raise)",
+            )
+
+        blob_name = (name or file.filename or "").strip()
+        if not blob_name:
+            raise UiApiError(
+                status_code=400,
+                code="invalid_argument",
+                message="blob name is required (provide ?name= or upload with a filename)",
+            )
+
+        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        record = ObjectRecord(
+            bucket=bucket,
+            name=blob_name,
+            size=len(data),
+            generation=1,
+            metageneration=1,
+            content_type=file.content_type or "application/octet-stream",
+            md5_hash="",
+            crc32c="",
+            time_created=now,
+            updated=now,
+        )
+        await storage.put_object(record, data)
+        return BlobSummary(
+            name=record.name,
+            size=record.size,
+            content_type=record.content_type,
+            updated=record.updated,
+            generation=record.generation,
         )
 
     return router

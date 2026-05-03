@@ -29,6 +29,10 @@ dependencies = [
     # Used by the BigQuery service to fetch gs:// URIs from the GCS service
     # (in-process or external) when running load-from-uri jobs.
     "httpx>=0.26",
+    # Required by FastAPI for multipart/form-data parsing on the ui-api blob
+    # upload endpoint. Imported transitively by FastAPI; pinned explicitly so
+    # the production Docker image (pip install .) doesn't crash at request time.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
