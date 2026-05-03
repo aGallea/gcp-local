@@ -7,14 +7,15 @@ Google wire-format that the public REST API on port 4443 emits.
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from gcp_local.core.lifecycle import Lifecycle
 from gcp_local.core.ui_api.errors import UiApiError
 from gcp_local.services.gcs.storage import (
     BucketAlreadyExists,
-    BucketNotFound,  # noqa: F401  -- used by endpoints in subsequent tasks
+    BucketNotFound,
     GcsStorage,
 )
 
@@ -161,5 +162,32 @@ def build_gcs_router() -> APIRouter:
             storage_class=meta.storage_class,
             time_created=meta.time_created,
         )
+
+    @router.delete("/buckets/{bucket}", status_code=204)
+    async def delete_bucket(
+        bucket: str,
+        storage: StorageDep,
+        force: bool = Query(default=False),
+    ) -> Response:
+        try:
+            await storage.get_bucket(bucket)
+        except BucketNotFound:
+            raise UiApiError(
+                status_code=404,
+                code="not_found",
+                message=f"bucket '{bucket}' not found",
+            ) from None
+        objects, _ = await storage.list_objects_with_prefixes(bucket)
+        if objects:
+            if not force:
+                raise UiApiError(
+                    status_code=409,
+                    code="not_empty",
+                    message=f"bucket '{bucket}' is not empty; pass force=true to delete contents",
+                )
+            for obj in objects:
+                await storage.delete_object(bucket, obj.name)
+        await storage.delete_bucket(bucket)
+        return Response(status_code=204)
 
     return router
