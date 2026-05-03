@@ -1,18 +1,26 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
+import { api } from "./api/client";
 import { AppLayout } from "./components/AppLayout";
+import { ErrorBanner } from "./components/ErrorBanner";
+import { useAsync } from "./hooks/useAsync";
+import GcsLanding from "./services/gcs/GcsLanding";
 
 export default function App() {
-  // Real services list comes from a useServices() hook in Task 21; the scaffold
-  // hard-codes GCS so the shell renders during early development.
-  const services = [
-    { name: "gcs", ports: [{ number: 4443, protocol: "rest" }], ui_supported: true },
-  ];
+  const services = useAsync(() => api.listServices(), []);
+
+  if (services.status === "loading" || services.status === "idle") {
+    return <div style={{ padding: 24 }}>Loading…</div>;
+  }
+  if (services.status === "error") {
+    return <ErrorBanner error={services.error!} onRetry={services.refresh} />;
+  }
+  const list = services.data!.services;
   return (
-    <AppLayout services={services} host={window.location.host}>
+    <AppLayout services={list} host={window.location.host}>
       <Routes>
         <Route path="/" element={<Navigate to="/gcs" replace />} />
-        <Route path="/gcs/*" element={<div>GCS placeholder</div>} />
+        <Route path="/gcs/*" element={<GcsLanding />} />
       </Routes>
     </AppLayout>
   );
