@@ -55,8 +55,9 @@ async def test_patch_metadata_increments_metageneration(wired):
     body = r.json()
     assert body["metadata"] == {"x": "1", "y": "2"}
     assert body["contentType"] == "application/xml"
-    assert body["generation"] == 5
-    assert body["metageneration"] == 2
+    # generation/metageneration are wire-serialized as JSON-quoted strings.
+    assert body["generation"] == "5"
+    assert body["metageneration"] == "2"
     got = await storage.get_object("b", "o")
     assert got.metageneration == 2
     assert len(events) == 1

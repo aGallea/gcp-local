@@ -30,7 +30,9 @@ async def test_create_bucket(client):
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "mybucket"
-    assert body["metageneration"] == 1
+    # metageneration is wire-serialized as a JSON-quoted string per the GCS
+    # JSON API spec (Go clients use json:",string" tags and reject numbers).
+    assert body["metageneration"] == "1"
 
 
 async def test_create_duplicate_bucket_409(client):

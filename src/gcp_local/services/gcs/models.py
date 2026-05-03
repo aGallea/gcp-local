@@ -1,4 +1,11 @@
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer
+
+# Per the Google Cloud Storage JSON API spec, the int64/uint64 fields
+# ``size``, ``generation``, ``metageneration`` (Object) and ``metageneration``
+# (Bucket) MUST be wire-serialized as JSON-quoted strings. Go clients
+# (e.g. Argo's executor) declare them with ``json:",string"`` and reject
+# raw numbers. Internally we keep them as ``int`` so arithmetic and
+# comparisons stay ergonomic — only the JSON wire form is coerced.
 
 
 class BucketMeta(BaseModel):
@@ -9,6 +16,10 @@ class BucketMeta(BaseModel):
     metageneration: int = 1
     location: str = "US"
     storage_class: str = "STANDARD"
+
+    @field_serializer("metageneration")
+    def _ser_metageneration(self, v: int) -> str:
+        return str(v)
 
 
 class ObjectRecord(BaseModel):
@@ -29,6 +40,10 @@ class ObjectRecord(BaseModel):
     time_created: str = Field(serialization_alias="timeCreated")
     updated: str
     metadata: dict[str, str] = Field(default_factory=dict)
+
+    @field_serializer("size", "generation", "metageneration")
+    def _ser_int_as_string(self, v: int) -> str:
+        return str(v)
 
     @computed_field
     def etag(self) -> str:

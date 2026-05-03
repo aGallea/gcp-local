@@ -65,15 +65,21 @@ Each stored object carries the following fields (defined in `models.ObjectRecord
 | `metadata` | `dict[str, str]` — user-controlled key/value pairs (`x-goog-meta-*`) |
 | `etag` | computed field: `"<generation>/<metageneration>"` |
 
-The JSON shape returned by every object API response:
+The JSON shape returned by every object API response. Note that
+`generation`, `metageneration`, and `size` are wire-serialized as JSON
+**strings** even though they hold integer values — the GCS JSON API spec
+declares them as `int64`/`uint64` with `json:",string"` tags, and Go
+clients (e.g. Argo Workflows' executor, `cloud.google.com/go/storage`)
+reject raw JSON numbers. Internally they are stored as `int` on
+`ObjectRecord`; the coercion lives in `models.py` via `@field_serializer`.
 
 ```json
 {
   "bucket": "my-bucket",
   "name": "logs/2026/04/app.log",
-  "generation": 17,
-  "metageneration": 1,
-  "size": 1234,
+  "generation": "17",
+  "metageneration": "1",
+  "size": "1234",
   "contentType": "text/plain",
   "md5Hash": "<base64>",
   "crc32c": "<base64>",

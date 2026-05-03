@@ -42,8 +42,9 @@ async def test_simple_upload(wired):
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "hello.txt"
-    assert body["size"] == 5
-    assert body["generation"] == 1
+    # size/generation are wire-serialized as JSON-quoted strings.
+    assert body["size"] == "5"
+    assert body["generation"] == "1"
     assert body["md5Hash"] == "XUFAKrxLKna5cZ2REBfFkg=="
     assert body["crc32c"] == "mnG7TA=="
     assert body["contentType"] == "text/plain"
@@ -68,7 +69,7 @@ async def test_simple_upload_overwrite_increments_generation(wired):
         headers={"Content-Type": "text/plain"},
     )
     body = r.json()
-    assert body["generation"] == 2
+    assert body["generation"] == "2"
 
 
 async def test_multipart_upload(wired):
@@ -186,7 +187,7 @@ async def test_resumable_single_chunk_commit(wired):
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "big.bin"
-    assert body["size"] == 100
+    assert body["size"] == "100"
     stored = await storage.get_object_bytes("b", "big.bin")
     assert stored == data
     assert len(events) == 1

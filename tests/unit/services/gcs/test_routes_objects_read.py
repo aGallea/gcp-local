@@ -46,7 +46,9 @@ async def test_get_object_metadata(client):
     assert r.status_code == 200
     body = r.json()
     assert body["name"] == "hello.txt"
-    assert body["size"] == 5
+    # size is wire-serialized as a JSON-quoted string per the GCS JSON API
+    # spec; see tests/unit/services/gcs/test_routes_int_string_serialization.py.
+    assert body["size"] == "5"
 
 
 async def test_get_object_bytes_alt_media(client):
