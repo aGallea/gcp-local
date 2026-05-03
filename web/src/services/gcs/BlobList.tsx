@@ -7,6 +7,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { useAsync } from "../../hooks/useAsync";
 
+import { BlobPreview } from "./BlobPreview";
 import { BlobUploadDialog } from "./BlobUploadDialog";
 import styles from "./BlobList.module.css";
 
@@ -25,6 +26,7 @@ export function BlobList({ api }: Props) {
   );
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [previewName, setPreviewName] = useState<string | null>(null);
 
   const goTo = (newPrefix: string) => {
     const next = new URLSearchParams(params);
@@ -118,7 +120,11 @@ export function BlobList({ api }: Props) {
             ))}
             {data.blobs.map((b) => (
               <tr key={b.name}>
-                <td>📄 {b.name.slice(prefix.length)}</td>
+                <td>
+                  <button onClick={() => setPreviewName(b.name)} className={styles.link}>
+                    📄 {b.name.slice(prefix.length)}
+                  </button>
+                </td>
                 <td>{b.size}</td>
                 <td>{b.content_type}</td>
                 <td>{b.updated}</td>
@@ -148,6 +154,14 @@ export function BlobList({ api }: Props) {
         onClose={() => setUploadOpen(false)}
         onUpload={handleUpload}
       />
+      {previewName && (
+        <BlobPreview
+          api={api}
+          bucket={bucket}
+          name={previewName}
+          onClose={() => setPreviewName(null)}
+        />
+      )}
     </div>
   );
 }
