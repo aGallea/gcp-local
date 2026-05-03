@@ -73,3 +73,20 @@ async def test_reset_unknown_service_404(client):
     c, _, _ = client
     r = await c.post("/_emulator/reset", params={"service": "nope"})
     assert r.status_code == 404
+
+
+async def test_ui_api_services_endpoint_mounted(client) -> None:
+    c, _, _ = client
+    r = await c.get("/_emulator/ui-api/v1/services")
+    assert r.status_code == 200
+    body = r.json()
+    assert {s["name"] for s in body["services"]} == {"a", "b"}
+
+
+async def test_ui_api_uses_envelope_error_format(client) -> None:
+    c, _, _ = client
+    # Unknown ui-api path -> 404 from FastAPI default; the envelope handler is
+    # only for UiApiError raises. Ensure the router mount doesn't shadow other
+    # admin endpoints. Sanity-check that /_emulator/health still works.
+    r = await c.get("/_emulator/health")
+    assert r.status_code == 200

@@ -4,10 +4,13 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 
 from gcp_local.core.lifecycle import Lifecycle
+from gcp_local.core.ui_api.errors import register_error_handlers
+from gcp_local.core.ui_api.router import build_ui_api_router
 
 
 def build_admin_app(lc: Lifecycle) -> FastAPI:
     app = FastAPI(title="gcp-local admin API", version="0.0.1")
+    register_error_handlers(app)
 
     @app.get("/_emulator/health")
     async def health() -> JSONResponse:
@@ -47,4 +50,5 @@ def build_admin_app(lc: Lifecycle) -> FastAPI:
                 raise HTTPException(status_code=404, detail=f"unknown service: {service}") from None
         return Response(status_code=204)
 
+    app.include_router(build_ui_api_router(lc))
     return app
