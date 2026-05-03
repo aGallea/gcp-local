@@ -70,6 +70,18 @@ class GcsService:
     def health(self) -> HealthStatus:
         return HealthStatus(ok=self._started, message="running" if self._started else "stopped")
 
+    @property
+    def storage(self) -> GcsStorage:
+        """The underlying storage backend.
+
+        Exposed so the admin ui-api router can read/write GCS state without
+        going through the wire-format REST API on port 4443. The wire surface
+        and the ui-api therefore share a single source of truth.
+        """
+        if self._storage is None:
+            raise RuntimeError("gcs service is not started")
+        return self._storage
+
     def _make_storage(self, ctx: Context) -> GcsStorage:
         if ctx.persist:
             gcs_root = Path(ctx.data_dir) / "gcs"
