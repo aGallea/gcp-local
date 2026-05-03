@@ -9,6 +9,7 @@ venv/
 dist/
 build/
 .DS_Store
+.superpowers/
 data/
 *.duckdb
 *.db
