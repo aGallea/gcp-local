@@ -1,0 +1,75 @@
+.shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #f4f4f5;
+  border-right: 1px solid var(--border);
+  padding: 16px;
+}
+
+.brand {
+  font-weight: 700;
+  margin-bottom: 24px;
+}
+
+.section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.nav {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav li {
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+}
+
+.nav a {
+  color: var(--fg);
+  text-decoration: none;
+  display: block;
+}
+
+.nav .active {
+  background: #e4e4e7;
+}
+
+.disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  height: 44px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 16px;
+}
+
+.host {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.content {
+  flex: 1;
+  padding: 24px;
+}
