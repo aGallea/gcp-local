@@ -71,6 +71,7 @@ def build_admin_app(lc: Lifecycle) -> FastAPI:
 def _mount_ui(app: FastAPI) -> None:
     from fastapi.responses import HTMLResponse
     from fastapi.staticfiles import StaticFiles
+    from starlette.exceptions import HTTPException as StarletteHTTPException
 
     from gcp_local.ui import static_dir
 
@@ -88,4 +89,21 @@ def _mount_ui(app: FastAPI) -> None:
 
         return
 
-    app.mount("/ui", StaticFiles(directory=base, html=True), name="ui")
+    class SPAStaticFiles(StaticFiles):
+        """StaticFiles with SPA history-mode fallback.
+
+        On 404 for a path that does not start with ``assets/``, fall back
+        to ``index.html`` so deep links like ``/ui/gcs/buckets/foo`` resolve
+        to the SPA shell. Asset paths still return real 404s so the browser
+        does not silently treat a missing JS bundle as HTML.
+        """
+
+        async def get_response(self, path: str, scope: Any) -> Any:
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as exc:
+                if exc.status_code == 404 and not path.startswith("assets/"):
+                    return await super().get_response("index.html", scope)
+                raise
+
+    app.mount("/ui", SPAStaticFiles(directory=base, html=True), name="ui")

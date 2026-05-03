@@ -132,3 +132,46 @@ async def test_ui_root_serves_bundle_when_present(tmp_path, monkeypatch) -> None
         r = await c.get("/ui/")
         assert r.status_code == 200
         assert "<title>built</title>" in r.text
+
+
+async def test_ui_deep_link_falls_back_to_index_html(tmp_path, monkeypatch) -> None:
+    """SPA history-mode deep links must serve index.html, not 404."""
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><title>spa</title>")
+    (static / "assets").mkdir()
+    (static / "assets" / "app.js").write_text("console.log('app');")
+    monkeypatch.setenv("GCP_LOCAL_UI_STATIC_DIR", str(static))
+
+    from httpx import ASGITransport, AsyncClient
+
+    from gcp_local.core.admin_api import build_admin_app
+    from gcp_local.core.context import Context
+    from gcp_local.core.lifecycle import Lifecycle
+
+    lc = Lifecycle([], Context(persist=False, data_dir=tmp_path))
+    app = build_admin_app(lc)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        # Root still serves index.html.
+        r = await c.get("/ui/")
+        assert r.status_code == 200
+        assert "<title>spa</title>" in r.text
+
+        # Real asset path returns the file.
+        r = await c.get("/ui/assets/app.js")
+        assert r.status_code == 200
+        assert r.text == "console.log('app');"
+
+        # Missing asset returns 404 (so the browser doesn't get HTML for a JS request).
+        r = await c.get("/ui/assets/missing.js")
+        assert r.status_code == 404
+
+        # Deep link (SPA route) falls back to index.html.
+        r = await c.get("/ui/gcs")
+        assert r.status_code == 200
+        assert "<title>spa</title>" in r.text
+
+        r = await c.get("/ui/gcs/buckets/foo")
+        assert r.status_code == 200
+        assert "<title>spa</title>" in r.text
