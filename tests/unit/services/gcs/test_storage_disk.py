@@ -48,6 +48,35 @@ async def test_put_object_writes_bytes_and_sidecar(tmp_path: Path):
     assert json.loads(meta_file.read_text())["name"] == "dir/o.txt"
 
 
+async def test_object_with_trailing_slash_round_trips(tmp_path: Path):
+    """Folder-placeholder objects (name ending in ``/``) are common in
+    GCS-style UIs. The disk layout must not collide with the nested-directory
+    scheme used for normal names."""
+    s = DiskStorage(tmp_path)
+    await s.create_bucket(BucketMeta(name="b", time_created="t"))
+    placeholder = make_record(name="logs/", size=0)
+    await s.put_object(placeholder, b"")
+    # Round-trip via get_object.
+    got = await s.get_object("b", "logs/")
+    assert got.name == "logs/"
+    assert got.size == 0
+    # Round-trip via list (logical name preserves the trailing slash).
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["logs/"]
+    # Bytes round-trip.
+    assert await s.get_object_bytes("b", "logs/") == b""
+    # And a real nested object inside the same prefix coexists with the
+    # placeholder (they live at different on-disk paths).
+    nested = make_record(name="logs/2026.log", size=3)
+    await s.put_object(nested, b"abc")
+    listed = await s.list_objects("b")
+    assert sorted(o.name for o in listed) == ["logs/", "logs/2026.log"]
+    # Delete removes only the placeholder.
+    await s.delete_object("b", "logs/")
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["logs/2026.log"]
+
+
 async def test_collision_rule_object_vs_directory(tmp_path: Path):
     s = DiskStorage(tmp_path)
     await s.create_bucket(BucketMeta(name="b", time_created="t"))

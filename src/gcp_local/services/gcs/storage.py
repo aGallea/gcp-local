@@ -246,11 +246,27 @@ class DiskStorage:
     """
 
     _META_SUFFIX = ".meta.json"
+    # GCS object names that end in ``/`` (folder placeholders) collide with
+    # the nested-directory layout used for normal names like ``logs/01.log``.
+    # We encode only the trailing slash on disk so the logical name (on the
+    # wire and in JSON metadata) stays unchanged. Internal slashes still map
+    # to directories so existing layouts are unaffected.
+    _DIR_MARKER_SUFFIX = "%2F"
 
     def __init__(self, root: Path) -> None:
         self._root = root
         self._root.mkdir(parents=True, exist_ok=True)
         self._locks: dict[str, asyncio.Lock] = {}
+
+    def _disk_object_name(self, name: str) -> str:
+        if name.endswith("/"):
+            return name[:-1] + self._DIR_MARKER_SUFFIX
+        return name
+
+    def _logical_object_name(self, disk_rel: str) -> str:
+        if disk_rel.endswith(self._DIR_MARKER_SUFFIX):
+            return disk_rel[: -len(self._DIR_MARKER_SUFFIX)] + "/"
+        return disk_rel
 
     def _bucket_lock(self, bucket: str) -> asyncio.Lock:
         lock = self._locks.get(bucket)
@@ -269,10 +285,10 @@ class DiskStorage:
         return self._bucket_dir(bucket) / "objects"
 
     def _object_bytes_path(self, bucket: str, name: str) -> Path:
-        return self._objects_root(bucket) / name
+        return self._objects_root(bucket) / self._disk_object_name(name)
 
     def _object_meta_path(self, bucket: str, name: str) -> Path:
-        return self._objects_root(bucket) / f"{name}{self._META_SUFFIX}"
+        return self._objects_root(bucket) / f"{self._disk_object_name(name)}{self._META_SUFFIX}"
 
     def _uploads_root(self, bucket: str) -> Path:
         return self._bucket_dir(bucket) / ".uploads"
@@ -366,7 +382,7 @@ class DiskStorage:
         for p in root.rglob("*"):
             if p.is_file() and not p.name.endswith(self._META_SUFFIX):
                 rel = p.relative_to(root).as_posix()
-                names.append(rel)
+                names.append(self._logical_object_name(rel))
         return sorted(names)
 
     async def list_objects(
