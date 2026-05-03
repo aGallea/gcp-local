@@ -190,4 +190,52 @@ def build_gcs_router() -> APIRouter:
         await storage.delete_bucket(bucket)
         return Response(status_code=204)
 
+    @router.get(
+        "/buckets/{bucket}/blobs",
+        response_model=BlobList,
+    )
+    async def list_blobs(
+        bucket: str,
+        storage: StorageDep,
+        prefix: str = Query(default=""),
+        delimiter: str | None = Query(default=None),
+        page_size: int = Query(default=1000, ge=1, le=1000),
+        page_token: str | None = Query(default=None),
+    ) -> BlobList:
+        try:
+            await storage.get_bucket(bucket)
+        except BucketNotFound:
+            raise UiApiError(
+                status_code=404,
+                code="not_found",
+                message=f"bucket '{bucket}' not found",
+            ) from None
+        objects, prefixes = await storage.list_objects_with_prefixes(
+            bucket,
+            prefix=prefix,
+            delimiter=delimiter,
+            max_results=page_size + 1,
+            start_after=page_token,
+        )
+        next_token: str | None = None
+        if len(objects) > page_size:
+            objects = objects[:page_size]
+            next_token = objects[-1].name
+        return BlobList(
+            bucket=bucket,
+            prefix=prefix,
+            blobs=[
+                BlobSummary(
+                    name=o.name,
+                    size=o.size,
+                    content_type=o.content_type,
+                    updated=o.updated,
+                    generation=o.generation,
+                )
+                for o in objects
+            ],
+            folders=sorted(prefixes),
+            next_page_token=next_token,
+        )
+
     return router
