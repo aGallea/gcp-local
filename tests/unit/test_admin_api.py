@@ -90,3 +90,45 @@ async def test_ui_api_uses_envelope_error_format(client) -> None:
     # admin endpoints. Sanity-check that /_emulator/health still works.
     r = await c.get("/_emulator/health")
     assert r.status_code == 200
+
+
+async def test_ui_root_returns_friendly_message_when_bundle_missing(tmp_path, monkeypatch) -> None:
+    empty = tmp_path / "empty-static"
+    empty.mkdir()
+    monkeypatch.setenv("GCP_LOCAL_UI_STATIC_DIR", str(empty))
+
+    from httpx import ASGITransport, AsyncClient
+
+    from gcp_local.core.admin_api import build_admin_app
+    from gcp_local.core.context import Context
+    from gcp_local.core.lifecycle import Lifecycle
+
+    lc = Lifecycle([], Context(persist=False, data_dir=tmp_path))
+    app = build_admin_app(lc)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/ui/")
+        assert r.status_code == 200
+        assert "gcp-local UI" in r.text
+        assert "npm run build" in r.text
+
+
+async def test_ui_root_serves_bundle_when_present(tmp_path, monkeypatch) -> None:
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><title>built</title>")
+    monkeypatch.setenv("GCP_LOCAL_UI_STATIC_DIR", str(static))
+
+    from httpx import ASGITransport, AsyncClient
+
+    from gcp_local.core.admin_api import build_admin_app
+    from gcp_local.core.context import Context
+    from gcp_local.core.lifecycle import Lifecycle
+
+    lc = Lifecycle([], Context(persist=False, data_dir=tmp_path))
+    app = build_admin_app(lc)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/ui/")
+        assert r.status_code == 200
+        assert "<title>built</title>" in r.text
