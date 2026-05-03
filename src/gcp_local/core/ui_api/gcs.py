@@ -338,6 +338,27 @@ def build_gcs_router() -> APIRouter:
             generation=record.generation,
         )
 
+    @router.get("/buckets/{bucket}/blobs/{name:path}/download")
+    async def download_blob(bucket: str, name: str, storage: StorageDep) -> Response:
+        try:
+            record = await storage.get_object(bucket, name)
+            data = await storage.get_object_bytes(bucket, name)
+        except (BucketNotFound, ObjectNotFound):
+            raise UiApiError(
+                status_code=404,
+                code="not_found",
+                message=f"blob '{name}' not found in bucket '{bucket}'",
+            ) from None
+        # Force download semantics; the SPA handles inline rendering separately.
+        # Quote the filename per RFC 6266 minimum form; the UI never sends
+        # exotic names but we still avoid CRLF injection by replacing.
+        safe = name.replace('"', "").replace("\r", "").replace("\n", "")
+        return Response(
+            content=data,
+            media_type=record.content_type,
+            headers={"content-disposition": f'attachment; filename="{safe}"'},
+        )
+
     @router.get(
         "/buckets/{bucket}/blobs/{name:path}",
         response_model=BlobMetadata,
