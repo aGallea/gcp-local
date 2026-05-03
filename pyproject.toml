@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gcp-local"
-version = "0.2.1"
+version = "0.3.0"
 description = "Local emulator for Google Cloud Platform services."
 readme = "README.md"
 license = { file = "LICENSE" }
