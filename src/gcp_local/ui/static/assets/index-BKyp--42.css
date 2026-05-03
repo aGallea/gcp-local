@@ -1,0 +1,1 @@
+:root{--lightningcss-light:initial;--lightningcss-dark: ;color-scheme:light;--bg:#fff;--fg:#18181b;--muted:#71717a;--border:#e4e4e7;--row-alt:#fafafa;--accent:#2563eb;--danger:#dc2626;color:var(--fg);background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.45}*{box-sizing:border-box}body{margin:0}button{font:inherit}
