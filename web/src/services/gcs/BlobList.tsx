@@ -7,6 +7,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { useAsync } from "../../hooks/useAsync";
 
+import { BlobUploadDialog } from "./BlobUploadDialog";
 import styles from "./BlobList.module.css";
 
 interface Props {
@@ -23,6 +24,7 @@ export function BlobList({ api }: Props) {
     [bucket, prefix],
   );
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
 
   const goTo = (newPrefix: string) => {
     const next = new URLSearchParams(params);
@@ -36,6 +38,11 @@ export function BlobList({ api }: Props) {
     const trimmed = prefix.replace(/\/$/, "");
     const idx = trimmed.lastIndexOf("/");
     goTo(idx === -1 ? "" : trimmed.slice(0, idx + 1));
+  };
+
+  const handleUpload = async (file: File) => {
+    await api.uploadBlob(bucket, file, prefix + file.name);
+    await blobs.refresh();
   };
 
   if (blobs.status === "loading" || blobs.status === "idle") {
@@ -67,11 +74,16 @@ export function BlobList({ api }: Props) {
             {prefix ? ` / ${prefix}` : ""}
           </span>
         </div>
+        <button onClick={() => setUploadOpen(true)} className={styles.upload}>
+          Upload
+        </button>
       </header>
       {empty ? (
         <EmptyState
           title="This folder is empty"
           description="Upload a file to get started."
+          actionLabel="Upload"
+          onAction={() => setUploadOpen(true)}
         />
       ) : (
         <table className={styles.table}>
@@ -130,6 +142,11 @@ export function BlobList({ api }: Props) {
         destructive
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+      <BlobUploadDialog
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        onUpload={handleUpload}
       />
     </div>
   );

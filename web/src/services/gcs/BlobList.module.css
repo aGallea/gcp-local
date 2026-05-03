@@ -6,3 +6,4 @@
 .table th { background: var(--row-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; }
 .delete { background: none; border: none; color: var(--danger); cursor: pointer; }
+.upload { padding: 6px 14px; border-radius: 6px; background: var(--accent); color: white; border: none; cursor: pointer; }
