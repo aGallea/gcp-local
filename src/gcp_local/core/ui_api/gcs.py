@@ -20,6 +20,7 @@ from gcp_local.services.gcs.storage import (
     BucketAlreadyExists,
     BucketNotFound,
     GcsStorage,
+    ObjectNotFound,
 )
 
 # ---- Schemas ---------------------------------------------------------------
@@ -81,6 +82,46 @@ class BlobPreview(BaseModel):
 
 
 BlobMetadata.model_rebuild()
+
+
+# ---- Preview helper --------------------------------------------------------
+
+
+_TEXT_PREVIEW_CAP = 1024 * 1024  # 1 MB
+_IMAGE_PREVIEW_CAP = 5 * 1024 * 1024  # 5 MB
+
+
+def _build_preview(content_type: str, data: bytes) -> BlobPreview:
+    import base64
+
+    ct = content_type.lower()
+    if ct.startswith("image/"):
+        if len(data) > _IMAGE_PREVIEW_CAP:
+            return BlobPreview(
+                kind="none",
+                reason="image too large for inline preview; download instead",
+            )
+        return BlobPreview(
+            kind="image",
+            image_data_url=f"data:{ct};base64,{base64.b64encode(data).decode()}",
+        )
+    kind: Literal["text", "json", "image", "none"]
+    if ct == "application/json":
+        kind = "json"
+    elif ct.startswith("text/"):
+        kind = "text"
+    else:
+        return BlobPreview(
+            kind="none",
+            reason=f"no inline preview for content-type '{content_type}'",
+        )
+    truncated = len(data) > _TEXT_PREVIEW_CAP
+    text = (
+        data[:_TEXT_PREVIEW_CAP].decode("utf-8", errors="replace")
+        if truncated
+        else data.decode("utf-8", errors="replace")
+    )
+    return BlobPreview(kind=kind, text=text, truncated=truncated)
 
 
 # ---- Helpers ---------------------------------------------------------------
@@ -295,6 +336,36 @@ def build_gcs_router() -> APIRouter:
             content_type=record.content_type,
             updated=record.updated,
             generation=record.generation,
+        )
+
+    @router.get(
+        "/buckets/{bucket}/blobs/{name:path}",
+        response_model=BlobMetadata,
+    )
+    async def get_blob_metadata(bucket: str, name: str, storage: StorageDep) -> BlobMetadata:
+        try:
+            record = await storage.get_object(bucket, name)
+        except (BucketNotFound, ObjectNotFound):
+            raise UiApiError(
+                status_code=404,
+                code="not_found",
+                message=f"blob '{name}' not found in bucket '{bucket}'",
+            ) from None
+        data = await storage.get_object_bytes(bucket, name)
+        preview = _build_preview(record.content_type, data)
+        return BlobMetadata(
+            bucket=record.bucket,
+            name=record.name,
+            size=record.size,
+            content_type=record.content_type,
+            time_created=record.time_created,
+            updated=record.updated,
+            generation=record.generation,
+            metageneration=record.metageneration,
+            md5_hash=record.md5_hash,
+            crc32c=record.crc32c,
+            metadata=record.metadata,
+            preview=preview,
         )
 
     return router
