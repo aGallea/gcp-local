@@ -1,0 +1,8 @@
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.modal { background: white; border-radius: 8px; padding: 24px; min-width: 360px; max-width: 480px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
+.title { margin: 0 0 12px 0; }
+.body { margin-bottom: 16px; color: var(--muted); }
+.actions { display: flex; gap: 8px; justify-content: flex-end; }
+.cancel { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: white; cursor: pointer; }
+.confirm { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: white; cursor: pointer; }
+.destructive { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--danger); background: var(--danger); color: white; cursor: pointer; }

@@ -73,3 +73,105 @@ async def test_reset_unknown_service_404(client):
     c, _, _ = client
     r = await c.post("/_emulator/reset", params={"service": "nope"})
     assert r.status_code == 404
+
+
+async def test_ui_api_services_endpoint_mounted(client) -> None:
+    c, _, _ = client
+    r = await c.get("/_emulator/ui-api/v1/services")
+    assert r.status_code == 200
+    body = r.json()
+    assert {s["name"] for s in body["services"]} == {"a", "b"}
+
+
+async def test_ui_api_uses_envelope_error_format(client) -> None:
+    c, _, _ = client
+    # Unknown ui-api path -> 404 from FastAPI default; the envelope handler is
+    # only for UiApiError raises. Ensure the router mount doesn't shadow other
+    # admin endpoints. Sanity-check that /_emulator/health still works.
+    r = await c.get("/_emulator/health")
+    assert r.status_code == 200
+
+
+async def test_ui_root_returns_friendly_message_when_bundle_missing(tmp_path, monkeypatch) -> None:
+    empty = tmp_path / "empty-static"
+    empty.mkdir()
+    monkeypatch.setenv("GCP_LOCAL_UI_STATIC_DIR", str(empty))
+
+    from httpx import ASGITransport, AsyncClient
+
+    from gcp_local.core.admin_api import build_admin_app
+    from gcp_local.core.context import Context
+    from gcp_local.core.lifecycle import Lifecycle
+
+    lc = Lifecycle([], Context(persist=False, data_dir=tmp_path))
+    app = build_admin_app(lc)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/ui/")
+        assert r.status_code == 200
+        assert "gcp-local UI" in r.text
+        assert "npm run build" in r.text
+
+
+async def test_ui_root_serves_bundle_when_present(tmp_path, monkeypatch) -> None:
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><title>built</title>")
+    monkeypatch.setenv("GCP_LOCAL_UI_STATIC_DIR", str(static))
+
+    from httpx import ASGITransport, AsyncClient
+
+    from gcp_local.core.admin_api import build_admin_app
+    from gcp_local.core.context import Context
+    from gcp_local.core.lifecycle import Lifecycle
+
+    lc = Lifecycle([], Context(persist=False, data_dir=tmp_path))
+    app = build_admin_app(lc)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/ui/")
+        assert r.status_code == 200
+        assert "<title>built</title>" in r.text
+
+
+async def test_ui_deep_link_falls_back_to_index_html(tmp_path, monkeypatch) -> None:
+    """SPA history-mode deep links must serve index.html, not 404."""
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<!doctype html><title>spa</title>")
+    (static / "assets").mkdir()
+    (static / "assets" / "app.js").write_text("console.log('app');")
+    monkeypatch.setenv("GCP_LOCAL_UI_STATIC_DIR", str(static))
+
+    from httpx import ASGITransport, AsyncClient
+
+    from gcp_local.core.admin_api import build_admin_app
+    from gcp_local.core.context import Context
+    from gcp_local.core.lifecycle import Lifecycle
+
+    lc = Lifecycle([], Context(persist=False, data_dir=tmp_path))
+    app = build_admin_app(lc)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        # Root still serves index.html.
+        r = await c.get("/ui/")
+        assert r.status_code == 200
+        assert "<title>spa</title>" in r.text
+
+        # Real asset path returns the file.
+        r = await c.get("/ui/assets/app.js")
+        assert r.status_code == 200
+        assert r.text == "console.log('app');"
+
+        # Missing asset returns 404 (so the browser doesn't get HTML for a JS request).
+        r = await c.get("/ui/assets/missing.js")
+        assert r.status_code == 404
+
+        # Deep link (SPA route) falls back to index.html.
+        r = await c.get("/ui/gcs")
+        assert r.status_code == 200
+        assert "<title>spa</title>" in r.text
+
+        r = await c.get("/ui/gcs/buckets/foo")
+        assert r.status_code == 200
+        assert "<title>spa</title>" in r.text

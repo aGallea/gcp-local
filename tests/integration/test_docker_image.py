@@ -68,6 +68,31 @@ def test_docker_image_health(docker_emulator):
     assert "gcs" in body["services"]
 
 
+def test_docker_image_serves_ui_bundle(docker_emulator):
+    """The image must ship the built SPA bundle at ``/ui/``."""
+    r = httpx.get(f"{docker_emulator}/ui/", follow_redirects=True, timeout=10)
+    assert r.status_code == 200
+    text = r.text.lower()
+    assert "<html" in text
+    # The fallback page contains "npm run build"; the real bundle does not.
+    assert "npm run build" not in text
+
+
+def test_docker_image_ui_api_round_trip(docker_emulator):
+    """The internal ui-api namespace must respond inside the container."""
+    r = httpx.get(f"{docker_emulator}/_emulator/ui-api/v1/services", timeout=10)
+    assert r.status_code == 200
+    names = {s["name"] for s in r.json()["services"]}
+    assert "gcs" in names
+
+
+def test_docker_image_ui_deep_link_falls_back_to_index(docker_emulator):
+    """Refreshing on a SPA route (e.g. /ui/gcs) must serve index.html, not 404."""
+    r = httpx.get(f"{docker_emulator}/ui/gcs", timeout=10)
+    assert r.status_code == 200
+    assert "<html" in r.text.lower()
+
+
 def test_docker_image_bigquery_health():
     """BigQuery service should report healthy when started via SERVICES=bigquery."""
     # BQ default port is 9050; admin is 4510.  Map both so we can check health.

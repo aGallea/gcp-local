@@ -62,6 +62,18 @@ curl http://localhost:4510/_emulator/health
 
 For docker-compose, Kubernetes, Rancher Desktop, persistence (`PERSIST=1`), and selecting a subset of services with `SERVICES=`, see [`docs/deployment.md`](docs/deployment.md).
 
+### Browser UI
+
+A bundled web UI ships with the emulator. Open:
+
+```
+http://localhost:4510/ui/
+```
+
+What's in this release: a full GCS browser — buckets, blobs, folder navigation, create/delete folders, drag-and-drop upload, inline preview (text / JSON / image), and download. The other services (BigQuery, Secret Manager, Pub/Sub, Firestore) appear in the sidebar greyed out as "coming soon"; per-service follow-up specs will land each in turn.
+
+The UI is local-only and performs no authentication. **Never expose port 4510 on a non-loopback interface** — anyone who can reach it can read and mutate every service's state.
+
 ## Connect a client
 
 ### BigQuery

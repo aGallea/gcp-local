@@ -42,3 +42,29 @@ async def test_disk_storage_reused_across_starts(ctx_disk: Context) -> None:
     storage2 = svc2._make_storage(ctx_disk)
     buckets = await storage2.list_buckets()
     assert [b.name for b in buckets] == ["persisted"]
+
+
+async def test_storage_property_exposed_after_start(tmp_path):
+    from gcp_local.core.context import Context
+    from gcp_local.services.gcs import GcsService
+
+    svc = GcsService()
+    ctx = Context(persist=False, data_dir=tmp_path)
+    await svc.start(ctx)
+    try:
+        assert svc.storage is not None
+        # Sanity: callable behaves like a GcsStorage.
+        buckets = await svc.storage.list_buckets()
+        assert buckets == []
+    finally:
+        await svc.stop()
+
+
+def test_storage_property_raises_before_start():
+    from gcp_local.services.gcs import GcsService
+
+    svc = GcsService()
+    import pytest
+
+    with pytest.raises(RuntimeError, match="not started"):
+        _ = svc.storage

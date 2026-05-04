@@ -177,6 +177,16 @@ Today, the state hub is an internal in-process bus. No external delivery happens
 
 ---
 
+## Browser UI consumer
+
+`src/gcp_local/core/ui_api/gcs.py` exposes a small, internal JSON API at `/_emulator/ui-api/v1/buckets/...` that the bundled SPA calls. It is **not** part of the GCS wire contract and clients must not rely on it. Crucially, the ui-api router reads and writes the same `GcsStorage` instance the public REST routes use — there is no shadow state. An upload from `gsutil` is visible in the UI immediately and vice versa.
+
+The UI synthesizes folders from prefix listings (`delimiter=/`) and lets users create empty folders by writing a 0-byte object whose name ends in `/` (e.g. `staging/`). This composes cleanly with `InMemoryStorage`, but `DiskStorage` would otherwise collide with the directory it uses to hold nested-name blobs — `staging/` as a file vs. `staging/` as a directory containing other objects. To resolve the collision, `DiskStorage` URL-encodes the trailing slash on disk: `staging/` is stored at `<bucket>/objects/staging%2F`. The encoding is local to the disk backend; the in-memory representation, the wire JSON, and the ui-api JSON all use the canonical `staging/` name.
+
+For the broader UI architecture (build pipeline, dev loop, recipe for adding a new service surface), see [`docs/development/ui.md`](../development/ui.md).
+
+---
+
 ## Errors
 
 All error responses use `errors.error_response()`, which delegates to `gcp_local.core.errors.rest_error_body()`. The resulting JSON envelope matches the GCP standard:

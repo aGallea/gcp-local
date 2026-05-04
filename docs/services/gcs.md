@@ -127,6 +127,31 @@ bucket.delete()
 
 ---
 
+## Browser UI
+
+A bundled web UI lets you inspect and manipulate GCS state without writing any code. Open:
+
+```
+http://localhost:4510/ui/
+```
+
+The UI is served by the admin port (4510), not the GCS wire port. What you can do today:
+
+- List, create, and delete buckets.
+- List blobs with prefix-folder navigation (breadcrumb segment links, `delimiter=/` semantics).
+- Create folders. Folders are 0-byte placeholder objects whose name ends in `/`; they show up in `list_blobs` exactly the same as any other object.
+- Delete folder placeholders.
+- Upload (drag-and-drop or file picker). The default upload cap is 100 MB; raise it with `GCP_LOCAL_UI_MAX_UPLOAD_MB`.
+- Download blobs.
+- Inline preview for text, JSON, and image blobs (1 MB cap for text/JSON, 5 MB for images; oversized blobs surface a download link instead).
+- Delete blobs.
+
+The UI reads and writes the **same in-process state** as the GCS REST API on port 4443. An object you upload via `gsutil` shows up in the UI immediately, and vice versa. There is no auth; the emulator is local-only.
+
+Under the hood the UI calls a separate, internal namespace at `/_emulator/ui-api/v1/...` — versioned and explicitly not part of the GCS wire contract. Client libraries (`google-cloud-storage`, `gsutil`, etc.) continue to talk to the public REST surface on port 4443.
+
+---
+
 ## Resumable and multipart uploads
 
 ### Multipart upload

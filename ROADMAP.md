@@ -30,6 +30,11 @@ These are services we know we'll want eventually but haven't committed to. The l
 | Cloud Tasks | gRPC / REST | (TBD) | (none) | Queue + leasing semantics |
 | Cloud Spanner | gRPC | (TBD) | `SPANNER_EMULATOR_HOST` | Strong consistency, SQL surface |
 
+## Browser UI
+
+- **Foundation landed** — a React SPA served at `/ui/` on the admin port (4510), backed by a versioned internal `/_emulator/ui-api/v1/...` namespace. The GCS surface is the v1 pilot (buckets, blobs, folder navigation, upload, preview, download).
+- **Per-service follow-ups** — separate specs will add UI surfaces for BigQuery, Secret Manager, Pub/Sub, and Firestore. See [`docs/development/ui.md`](docs/development/ui.md) for the recipe.
+
 ## Per-service follow-ups
 
 These are known gaps in the already-implemented (Alpha) services, tracked here so they don't get lost.

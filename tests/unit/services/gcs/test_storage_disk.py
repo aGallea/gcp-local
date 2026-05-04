@@ -48,6 +48,67 @@ async def test_put_object_writes_bytes_and_sidecar(tmp_path: Path):
     assert json.loads(meta_file.read_text())["name"] == "dir/o.txt"
 
 
+async def test_orphan_bytes_file_does_not_block_placeholder_creation(tmp_path: Path):
+    """An orphan file at ``objects/foo`` (no sidecar) must not block creating
+    a folder placeholder named ``foo/`` — the placeholder lives at a different
+    disk path (``foo%2F``) and the collision check ignores orphans."""
+    s = DiskStorage(tmp_path)
+    await s.create_bucket(BucketMeta(name="b", time_created="t"))
+    # Drop an orphan bytes-only file with no sidecar.
+    (tmp_path / "b" / "objects" / "foo").write_bytes(b"x")
+    # Creating the folder placeholder ``foo/`` must succeed.
+    placeholder = make_record(name="foo/", size=0)
+    await s.put_object(placeholder, b"")
+    got = await s.get_object("b", "foo/")
+    assert got.name == "foo/"
+    # The orphan and the placeholder coexist; only the placeholder is listed.
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["foo/"]
+
+
+async def test_orphan_bytes_file_does_not_break_listing(tmp_path: Path):
+    """An on-disk orphan (bytes file with no ``.meta.json`` sidecar — e.g.
+    left behind by a crashed put_object) must not cause list_objects to 500.
+    Skip silently."""
+    s = DiskStorage(tmp_path)
+    await s.create_bucket(BucketMeta(name="b", time_created="t"))
+    real = make_record(name="real.txt", size=3)
+    await s.put_object(real, b"abc")
+    # Manually drop an orphan bytes file with no sidecar.
+    (tmp_path / "b" / "objects" / "orphan").write_bytes(b"x")
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["real.txt"]
+
+
+async def test_object_with_trailing_slash_round_trips(tmp_path: Path):
+    """Folder-placeholder objects (name ending in ``/``) are common in
+    GCS-style UIs. The disk layout must not collide with the nested-directory
+    scheme used for normal names."""
+    s = DiskStorage(tmp_path)
+    await s.create_bucket(BucketMeta(name="b", time_created="t"))
+    placeholder = make_record(name="logs/", size=0)
+    await s.put_object(placeholder, b"")
+    # Round-trip via get_object.
+    got = await s.get_object("b", "logs/")
+    assert got.name == "logs/"
+    assert got.size == 0
+    # Round-trip via list (logical name preserves the trailing slash).
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["logs/"]
+    # Bytes round-trip.
+    assert await s.get_object_bytes("b", "logs/") == b""
+    # And a real nested object inside the same prefix coexists with the
+    # placeholder (they live at different on-disk paths).
+    nested = make_record(name="logs/2026.log", size=3)
+    await s.put_object(nested, b"abc")
+    listed = await s.list_objects("b")
+    assert sorted(o.name for o in listed) == ["logs/", "logs/2026.log"]
+    # Delete removes only the placeholder.
+    await s.delete_object("b", "logs/")
+    listed = await s.list_objects("b")
+    assert [o.name for o in listed] == ["logs/2026.log"]
+
+
 async def test_collision_rule_object_vs_directory(tmp_path: Path):
     s = DiskStorage(tmp_path)
     await s.create_bucket(BucketMeta(name="b", time_created="t"))
