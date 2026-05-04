@@ -182,6 +182,31 @@ describe("BlobList", () => {
     );
   });
 
+  it("breadcrumb segments are clickable and navigate to the right prefix", async () => {
+    const list = vi.fn().mockResolvedValue({
+      bucket: "b",
+      prefix: "test/1/",
+      blobs: [],
+      folders: [],
+      next_page_token: null,
+    });
+    const api = mkApi({ listBlobs: list });
+    renderAt("/gcs/buckets/b?prefix=test/1/", api);
+
+    // The "test" crumb should be a clickable button (we're inside test/1/).
+    await waitFor(() => expect(screen.getByRole("button", { name: "test/" })).toBeInTheDocument());
+    // The "1/" segment is the current location — plain text, not a button.
+    expect(screen.queryByRole("button", { name: "1/" })).toBeNull();
+    // Bucket crumb is also clickable.
+    expect(screen.getByRole("button", { name: "b" })).toBeInTheDocument();
+
+    // Clicking "test" navigates up to prefix=test/.
+    await userEvent.click(screen.getByRole("button", { name: "test/" }));
+    await waitFor(() =>
+      expect(list).toHaveBeenLastCalledWith("b", { prefix: "test/", delimiter: "/" }),
+    );
+  });
+
   it("deletes a folder placeholder via the confirm dialog and refreshes", async () => {
     const list = vi
       .fn()

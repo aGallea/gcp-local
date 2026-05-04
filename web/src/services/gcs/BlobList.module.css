@@ -1,6 +1,8 @@
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .back { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; margin-right: 16px; }
 .crumb { color: var(--muted); }
+.crumbLink { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; font: inherit; }
+.crumbLink:hover { color: var(--accent); text-decoration: underline; }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .table th { background: var(--row-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }

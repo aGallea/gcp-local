@@ -107,8 +107,37 @@ export function BlobList({ api }: Props) {
             ← Buckets
           </button>
           <span className={styles.crumb}>
-            {bucket}
-            {prefix ? ` / ${prefix}` : ""}
+            {prefix ? (
+              <button onClick={() => goTo("")} className={styles.crumbLink}>
+                {bucket}
+              </button>
+            ) : (
+              bucket
+            )}
+            {prefix &&
+              prefix
+                .replace(/\/$/, "")
+                .split("/")
+                .filter(Boolean)
+                .map((segment, idx, arr) => {
+                  const isLast = idx === arr.length - 1;
+                  const accum = arr.slice(0, idx + 1).join("/") + "/";
+                  return (
+                    <span key={accum}>
+                      {" / "}
+                      {isLast ? (
+                        `${segment}/`
+                      ) : (
+                        <button
+                          onClick={() => goTo(accum)}
+                          className={styles.crumbLink}
+                        >
+                          {segment}/
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
           </span>
         </div>
         <div className={styles.actions}>
