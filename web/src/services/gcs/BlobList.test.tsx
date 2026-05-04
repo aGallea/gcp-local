@@ -181,4 +181,35 @@ describe("BlobList", () => {
       expect(screen.getByText(/this folder is empty/i)).toBeInTheDocument(),
     );
   });
+
+  it("deletes a folder placeholder via the confirm dialog and refreshes", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        bucket: "b",
+        prefix: "",
+        blobs: [],
+        folders: ["logs/"],
+        next_page_token: null,
+      })
+      .mockResolvedValueOnce({
+        bucket: "b",
+        prefix: "",
+        blobs: [],
+        folders: [],
+        next_page_token: null,
+      });
+    const del = vi.fn().mockResolvedValue(undefined);
+    const api = mkApi({ listBlobs: list, deleteBlob: del });
+    renderAt("/gcs/buckets/b", api);
+    // The folder row's Delete button is the only Delete button visible.
+    await userEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    // Then the dialog's Delete button (the second match).
+    const buttons = screen.getAllByRole("button", { name: /^delete$/i });
+    await userEvent.click(buttons[buttons.length - 1]);
+    await waitFor(() => expect(del).toHaveBeenCalledWith("b", "logs/"));
+    await waitFor(() =>
+      expect(screen.getByText(/this folder is empty/i)).toBeInTheDocument(),
+    );
+  });
 });

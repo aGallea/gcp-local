@@ -26,6 +26,7 @@ export function BlobList({ api }: Props) {
     [bucket, prefix],
   );
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingFolderDelete, setPendingFolderDelete] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [previewName, setPreviewName] = useState<string | null>(null);
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
@@ -83,6 +84,21 @@ export function BlobList({ api }: Props) {
     await blobs.refresh();
   };
 
+  const confirmFolderDelete = async () => {
+    if (!pendingFolderDelete) return;
+    // Best-effort: delete the placeholder object. If the folder appears only
+    // because of nested files (no placeholder), this 404s and we just refresh
+    // so the user sees the folder is still there — they need to delete the
+    // contained files first.
+    try {
+      await api.deleteBlob(bucket, pendingFolderDelete);
+    } catch {
+      // ignore — refresh will reveal whether anything changed.
+    }
+    setPendingFolderDelete(null);
+    await blobs.refresh();
+  };
+
   return (
     <div>
       <header className={styles.header}>
@@ -137,7 +153,15 @@ export function BlobList({ api }: Props) {
                     📁 {f.slice(prefix.length)}
                   </button>
                 </td>
-                <td colSpan={4}></td>
+                <td colSpan={3}></td>
+                <td>
+                  <button
+                    onClick={() => setPendingFolderDelete(f)}
+                    className={styles.delete}
+                  >
+                    Delete
+                  </button>
+                </td>
               </tr>
             ))}
             {visibleBlobs.map((b) => (
@@ -170,6 +194,15 @@ export function BlobList({ api }: Props) {
         destructive
         onConfirm={confirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+      <ConfirmDialog
+        open={pendingFolderDelete !== null}
+        title={`Delete folder "${pendingFolderDelete}"?`}
+        message="Removes the folder placeholder. Files inside the folder are not deleted; if any remain, the folder will keep showing in the listing until you delete them too."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmFolderDelete}
+        onCancel={() => setPendingFolderDelete(null)}
       />
       <BlobUploadDialog
         open={uploadOpen}
