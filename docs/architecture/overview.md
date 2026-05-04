@@ -43,6 +43,21 @@ directory (`docs/architecture/`), and the developer guide
 **`scripts/`** — `gen_protos.sh`, which compiles `.proto` files under
 `protos/` into Python stubs and writes them to `src/gcp_local/generated/`.
 
+**`web/`** — source of the browser UI (a React + TypeScript SPA built with
+Vite). The production bundle is committed to
+`src/gcp_local/ui/static/` and served at `/ui/` on the admin port (4510)
+by FastAPI's `StaticFiles` mount, with an SPA fallback so deep links like
+`/ui/gcs/<bucket>` resolve. The SPA talks to a versioned, internal
+`/_emulator/ui-api/v1/...` namespace exposed by
+`src/gcp_local/core/ui_api/`; that namespace projects the same in-process
+state the wire-level emulators expose (e.g. ui-api/gcs reads and writes
+the GCS service's `GcsStorage` instance directly), so an upload via
+`gsutil` and an upload via the UI both land in the same place. The
+ui-api is explicitly not part of any GCP wire contract — client
+libraries continue to talk to the per-service ports. For the dev loop,
+build pipeline, and the recipe for adding a new service to the UI, see
+[`docs/development/ui.md`](../development/ui.md).
+
 ---
 
 ## Service protocol

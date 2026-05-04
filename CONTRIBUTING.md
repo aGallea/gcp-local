@@ -58,6 +58,30 @@ python -m mypy src/
 
 CI runs the same commands; if they pass locally they should pass in CI.
 
+## Frontend toolchain
+
+The browser UI (served at `http://localhost:4510/ui/`) lives under `web/`. It is a Vite + React + TypeScript SPA. Working on it requires Node 20 LTS — older Node versions are not supported.
+
+One-time setup:
+
+```bash
+cd web
+npm install
+```
+
+Day-to-day commands:
+
+```bash
+npm run dev    # Vite dev server on :5173, proxies /_emulator/* to :4510
+npm run lint   # ESLint flat config
+npm test       # Vitest
+npm run build  # type-checks + emits the production bundle to ../src/gcp_local/ui/static/
+```
+
+The build output (`src/gcp_local/ui/static/`) is **committed to the repository** so the Python package ships with a pre-built bundle. After any change under `web/`, run `npm run build` and commit the regenerated bundle alongside your source changes. CI fails if the committed bundle drifts from a fresh build.
+
+For the architecture walkthrough and the recipe for adding a new service surface to the UI, see [`docs/development/ui.md`](docs/development/ui.md).
+
 ## Branch + PR workflow
 
 1. Create a feature branch off `master`. Branch names use the form `<service>` or `<service>-<topic>`, e.g. `bigquery-load-jobs` or `pubsub`.
