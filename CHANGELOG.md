@@ -4,6 +4,47 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.4.0](https://github.com/aGallea/gcp-local/compare/v0.3.0...v0.4.0) (2026-05-04)
+
+
+### Added
+
+* **gcs:** expose GcsService.storage publicly for ui-api ([8684346](https://github.com/aGallea/gcp-local/commit/8684346bc00d90068062ce1684655ba5832ec683))
+* services UI foundation + GCS pilot ([01fc044](https://github.com/aGallea/gcp-local/commit/01fc044d14d83aebf2daade31362ef5097881e94))
+* **ui-api:** add error envelope and exception handlers ([6c708b7](https://github.com/aGallea/gcp-local/commit/6c708b7ed7b74f97079bd316f2df4d7606d1448d))
+* **ui-api:** add router with /services endpoint ([a773cb2](https://github.com/aGallea/gcp-local/commit/a773cb2fa28a6657f845ce167d47846ea1fe2651))
+* **ui-api:** blob metadata with text/json/image previews ([8923c90](https://github.com/aGallea/gcp-local/commit/8923c9071e02c6814afbde761d8ced64b58f5ec8))
+* **ui-api:** DELETE /gcs/buckets/{b}/blobs/{n} removes a blob ([b2d1fa6](https://github.com/aGallea/gcp-local/commit/b2d1fa6c0bc24fe09f7a710dd13648b98587942b))
+* **ui-api:** DELETE /gcs/buckets/{bucket} with force flag ([4c8c387](https://github.com/aGallea/gcp-local/commit/4c8c387a02214e3db30efdf8191ec78183138730))
+* **ui-api:** GET /gcs/buckets lists buckets ([6a461b6](https://github.com/aGallea/gcp-local/commit/6a461b680d0eefdd69edabc84b6ec1e39fdc1512))
+* **ui-api:** GET /gcs/buckets/{b}/blobs/{n}/download returns bytes ([3330a69](https://github.com/aGallea/gcp-local/commit/3330a69765d942f4acaadac72ce66ab03e6a6229))
+* **ui-api:** list blobs with prefix/delimiter/page support ([828a211](https://github.com/aGallea/gcp-local/commit/828a21102755afb295d1470ad7bdbe8306e106af))
+* **ui-api:** mount ui-api router on admin app ([944b2dc](https://github.com/aGallea/gcp-local/commit/944b2dc5e0ca26978d0d0ecabf2dc88d8ac28430))
+* **ui-api:** POST /gcs/buckets creates a bucket ([e59e3ab](https://github.com/aGallea/gcp-local/commit/e59e3abfe410f6800d293c159e36ab14342c7c91))
+* **ui-api:** scaffold gcs router with schemas and storage dep ([e2104c1](https://github.com/aGallea/gcp-local/commit/e2104c18c3a6978d80d28170bf5eadad21827013))
+* **ui-api:** upload blob with multipart and size cap ([3472eeb](https://github.com/aGallea/gcp-local/commit/3472eeb0f0665af7e455e29b5b051c57aabd68b9))
+* **ui:** mount /ui/ static bundle with friendly fallback ([427fcb5](https://github.com/aGallea/gcp-local/commit/427fcb5f0885374df7a4788b2a3eca6b884651a6))
+* **web:** AppLayout shell with sidebar nav and disabled services ([fe69915](https://github.com/aGallea/gcp-local/commit/fe699158d1d7394ec4ad13ab5d8944ab188243d8))
+* **web:** blob list with prefix navigation and delete-with-confirm ([7727efc](https://github.com/aGallea/gcp-local/commit/7727efc0dcbea1aaa72958391e9727dcda5c3401))
+* **web:** blob preview with text/json/image and download ([24d81af](https://github.com/aGallea/gcp-local/commit/24d81af2c342da3bd2e8a0429614ad15db15d465))
+* **web:** blob upload with drag-drop and file picker ([d85b54e](https://github.com/aGallea/gcp-local/commit/d85b54e35513f7bb12ac115164f62a7971b2d9f7))
+* **web:** clickable breadcrumb segments ([752204c](https://github.com/aGallea/gcp-local/commit/752204c4173c14c41dade49deec90315c5ba1ac2))
+* **web:** create folder via empty placeholder object ([09a3074](https://github.com/aGallea/gcp-local/commit/09a307417bf7cd0ae59a1b41e6b074182acf2a2b))
+* **web:** delete folder placeholder via confirm dialog ([b792aa0](https://github.com/aGallea/gcp-local/commit/b792aa0a5a8a1fef4d58c83aab86abe249fba5d8))
+* **web:** EmptyState, ErrorBanner, ConfirmDialog primitives ([c3ce193](https://github.com/aGallea/gcp-local/commit/c3ce193485c3221b3b1decaa291c86282b7d5f70))
+* **web:** GCS bucket list with create + delete-with-confirm ([3287e85](https://github.com/aGallea/gcp-local/commit/3287e8537afec8675ede50e2108d962df254a33f))
+* **web:** scaffold React + Vite + TS + vitest ([e9487cc](https://github.com/aGallea/gcp-local/commit/e9487ccc74be81599252815412a96c9d675275b0))
+* **web:** typed UiApi client with envelope error handling ([2ee5a73](https://github.com/aGallea/gcp-local/commit/2ee5a733a23b6f5f4621792955cc87f8bf9d7b2f))
+* **web:** useAsync hook and wire services list into App ([9a49d83](https://github.com/aGallea/gcp-local/commit/9a49d831b545a7a83b136191ac34727cd401bbc1))
+
+
+### Fixed
+
+* **gcs:** collision check ignores orphan files and trailing-slash names ([8c92229](https://github.com/aGallea/gcp-local/commit/8c92229578445450485beef9020bf8a6cbbc8333))
+* **gcs:** DiskStorage handles object names ending in '/' ([3a70207](https://github.com/aGallea/gcp-local/commit/3a7020770bb4f0f63158db23d68cb3393179b4a4))
+* **gcs:** DiskStorage list_objects skips orphan bytes-only files ([c5b0cbb](https://github.com/aGallea/gcp-local/commit/c5b0cbb1799cb952390d407e69436c0e5091a01a))
+* **ui:** SPA history-mode fallback for deep links ([ce6426d](https://github.com/aGallea/gcp-local/commit/ce6426dd63e1628b100b116509b7c99ae25ca2f1))
+
 ## [0.3.0](https://github.com/aGallea/gcp-local/compare/v0.2.1...v0.3.0) (2026-05-03)
 
 
