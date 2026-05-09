@@ -339,9 +339,7 @@ def build_bigquery_router() -> APIRouter:
                 message=f"dataset '{project}:{dataset_id}' not found",
             ) from None
         records = await storage.list_tables(project, dataset_id)
-        summaries = [
-            _table_to_summary(r, await _count_rows(storage, r)) for r in records
-        ]
+        summaries = [_table_to_summary(r, await _count_rows(storage, r)) for r in records]
         return TableList(tables=summaries)
 
     @router.get(
