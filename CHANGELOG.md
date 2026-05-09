@@ -4,6 +4,14 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.5.1](https://github.com/aGallea/gcp-local/compare/v0.5.0...v0.5.1) (2026-05-09)
+
+
+### Fixed
+
+* make python -m gcp_local work on the host ([33337e9](https://github.com/aGallea/gcp-local/commit/33337e904015375c1245dae93faa3ace2417ac74))
+* make python -m gcp_local work on the host ([720d043](https://github.com/aGallea/gcp-local/commit/720d043d83c57ebba62942bf01ade58ee3f95147))
+
 ## [0.5.0](https://github.com/aGallea/gcp-local/compare/v0.4.0...v0.5.0) (2026-05-09)
 
 
