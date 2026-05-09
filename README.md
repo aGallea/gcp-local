@@ -71,8 +71,10 @@ git clone https://github.com/aGallea/gcp-local.git
 cd gcp-local
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-python -m gcp_local
+gcp-local                # or: python -m gcp_local
 ```
+
+> Requires Python 3.13+ (a `.python-version` is included for `pyenv` / `uv` users).
 
 Health check:
 

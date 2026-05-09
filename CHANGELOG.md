@@ -18,6 +18,12 @@ Releases are managed by [release-please](https://github.com/googleapis/release-p
 ### Added
 
 - **BigQuery browser UI**: project / dataset / table navigation, schema view with paged row preview, and an ad-hoc SQL query console. Served at `http://localhost:4510/ui/bigquery`, backed by a new `/_emulator/ui-api/v1/bigquery/...` namespace that reads and writes the same `BigQueryStorage` and `JobRunner` instances as the wire surface on port 9050.
+- **`python -m gcp_local`**: added `src/gcp_local/__main__.py` so the package can be invoked as a module, alongside the existing `gcp-local` console script.
+- **`.python-version`**: pinned to `3.13` for `pyenv` / `uv` users; matches `requires-python` in `pyproject.toml`.
+
+### Changed
+
+- **Default `data_dir` on the host**: `cli.entrypoint()` now defaults to `./.gcp-local-data` (cwd-relative) instead of `/data`, which was unwritable when running outside Docker. The Docker image keeps the previous behavior by setting `GCP_LOCAL_DATA_DIR=/data` in the Dockerfile env.
 
 ## [0.4.0](https://github.com/aGallea/gcp-local/compare/v0.3.0...v0.4.0) (2026-05-04)
 

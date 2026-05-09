@@ -127,7 +127,9 @@ stopping a fixed set of `Service` instances. The sequence is:
 1. **Context construction** — `cli.py` builds a `Context` once, before any
    service starts. `Context` carries:
    - `persist: bool` — whether services should write to disk.
-   - `data_dir: Path` — base directory for on-disk state (default `/data`).
+   - `data_dir: Path` — base directory for on-disk state. Default is
+     `./.gcp-local-data` (relative to the working directory) on the host;
+     the Docker image overrides this to `/data` via `GCP_LOCAL_DATA_DIR`.
    - `port_overrides: dict[str, int]` — per-service port overrides read from
      environment variables.
    - `state_hub: StateHub | None` — the cross-service event bus (always set
