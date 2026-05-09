@@ -4,6 +4,15 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.5.0](https://github.com/aGallea/gcp-local/compare/v0.4.0...v0.5.0) (2026-05-09)
+
+
+### Added
+
+* **ui:** add BigQuery browser UI ([fa1c1d1](https://github.com/aGallea/gcp-local/commit/fa1c1d1cf34c46d565e82c68be2958b4dbb56ab4))
+* **ui:** add BigQuery browser UI ([bbd9bfe](https://github.com/aGallea/gcp-local/commit/bbd9bfe0d74e22279b4377aba3a9bc306e0cb0f9))
+* **ui:** add gcp-local logo, favicon, and README hero ([bb1ebc3](https://github.com/aGallea/gcp-local/commit/bb1ebc311a39006f436beebdf593ccdd871b946b))
+
 ## [Unreleased]
 
 ### Added
