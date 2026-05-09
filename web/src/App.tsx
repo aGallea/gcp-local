@@ -4,6 +4,7 @@ import { api } from "./api/client";
 import { AppLayout } from "./components/AppLayout";
 import { ErrorBanner } from "./components/ErrorBanner";
 import { useAsync } from "./hooks/useAsync";
+import BigQueryLanding from "./services/bigquery/BigQueryLanding";
 import GcsLanding from "./services/gcs/GcsLanding";
 
 export default function App() {
@@ -17,10 +18,15 @@ export default function App() {
   }
   const list = services.data!.services;
   return (
-    <AppLayout services={list} host={window.location.host}>
+    <AppLayout
+      services={list}
+      host={window.location.host}
+      version={services.data!.version}
+    >
       <Routes>
         <Route path="/" element={<Navigate to="/gcs" replace />} />
         <Route path="/gcs/*" element={<GcsLanding />} />
+        <Route path="/bigquery/*" element={<BigQueryLanding />} />
       </Routes>
     </AppLayout>
   );

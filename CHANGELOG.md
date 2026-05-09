@@ -4,6 +4,12 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [Unreleased]
+
+### Added
+
+- **BigQuery browser UI**: project / dataset / table navigation, schema view with paged row preview, and an ad-hoc SQL query console. Served at `http://localhost:4510/ui/bigquery`, backed by a new `/_emulator/ui-api/v1/bigquery/...` namespace that reads and writes the same `BigQueryStorage` and `JobRunner` instances as the wire surface on port 9050.
+
 ## [0.4.0](https://github.com/aGallea/gcp-local/compare/v0.3.0...v0.4.0) (2026-05-04)
 
 

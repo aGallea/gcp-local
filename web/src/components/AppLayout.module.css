@@ -13,6 +13,27 @@
 .brand {
   font-weight: 700;
   margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brandIcon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.brandName {
+  font-weight: 700;
+}
+
+.versionTag {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+  background: #e4e4e7;
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
 .section {
@@ -62,6 +83,7 @@
   align-items: center;
   justify-content: flex-end;
   padding: 0 16px;
+  gap: 16px;
 }
 
 .host {

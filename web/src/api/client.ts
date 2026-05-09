@@ -2,6 +2,13 @@ import type {
   BlobList,
   BlobMetadata,
   BlobSummary,
+  BqDatasetList,
+  BqDatasetSummary,
+  BqProjectList,
+  BqQueryResult,
+  BqTableList,
+  BqTableMetadata,
+  BqTablePreview,
   BucketList,
   BucketSummary,
   ServiceList,
@@ -109,6 +116,84 @@ export class UiApi {
       `/gcs/buckets/${encodeURIComponent(bucket)}/blobs/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     );
+  }
+
+  // ---- BigQuery -----------------------------------------------------------
+
+  listBqProjects(): Promise<BqProjectList> {
+    return request("/bigquery/projects");
+  }
+
+  listBqDatasets(project: string): Promise<BqDatasetList> {
+    return request(`/bigquery/projects/${encodeURIComponent(project)}/datasets`);
+  }
+
+  createBqDataset(
+    project: string,
+    payload: { dataset_id: string; location?: string },
+  ): Promise<BqDatasetSummary> {
+    return request(`/bigquery/projects/${encodeURIComponent(project)}/datasets`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteBqDataset(project: string, datasetId: string, deleteContents = false): Promise<void> {
+    return request(
+      `/bigquery/projects/${encodeURIComponent(project)}/datasets/${encodeURIComponent(datasetId)}?delete_contents=${deleteContents}`,
+      { method: "DELETE" },
+    );
+  }
+
+  listBqTables(project: string, datasetId: string): Promise<BqTableList> {
+    return request(
+      `/bigquery/projects/${encodeURIComponent(project)}/datasets/${encodeURIComponent(datasetId)}/tables`,
+    );
+  }
+
+  getBqTable(
+    project: string,
+    datasetId: string,
+    tableId: string,
+  ): Promise<BqTableMetadata> {
+    return request(
+      `/bigquery/projects/${encodeURIComponent(project)}/datasets/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}`,
+    );
+  }
+
+  deleteBqTable(project: string, datasetId: string, tableId: string): Promise<void> {
+    return request(
+      `/bigquery/projects/${encodeURIComponent(project)}/datasets/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  previewBqTable(
+    project: string,
+    datasetId: string,
+    tableId: string,
+    options: { maxResults?: number; offset?: number } = {},
+  ): Promise<BqTablePreview> {
+    const params = new URLSearchParams();
+    if (options.maxResults !== undefined) params.set("max_results", String(options.maxResults));
+    if (options.offset !== undefined) params.set("offset", String(options.offset));
+    const qs = params.toString();
+    return request(
+      `/bigquery/projects/${encodeURIComponent(project)}/datasets/${encodeURIComponent(datasetId)}/tables/${encodeURIComponent(tableId)}/preview${qs ? `?${qs}` : ""}`,
+    );
+  }
+
+  runBqQuery(payload: {
+    project: string;
+    sql: string;
+    max_results?: number;
+  }): Promise<BqQueryResult> {
+    return request(`/bigquery/queries`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
   }
 }
 

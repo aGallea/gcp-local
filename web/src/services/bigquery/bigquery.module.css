@@ -1,0 +1,60 @@
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.crumb { color: var(--muted); }
+.crumbLink { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; font: inherit; }
+.crumbLink:hover { color: var(--accent); text-decoration: underline; }
+.back { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; margin-right: 16px; }
+.primary { padding: 6px 14px; border-radius: 6px; background: var(--accent); color: white; border: none; cursor: pointer; }
+.secondary { padding: 6px 14px; border-radius: 6px; background: white; color: var(--fg); border: 1px solid var(--border); cursor: pointer; }
+.secondary:hover { background: var(--row-alt); }
+.actions { display: flex; gap: 8px; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.table th { background: var(--row-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.compactTable { width: auto; min-width: 320px; max-width: 720px; border-collapse: collapse; }
+.compactTable th, .compactTable td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.compactTable th { background: var(--row-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); white-space: nowrap; }
+.link { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; text-align: left; }
+.delete { background: none; border: none; color: var(--danger); cursor: pointer; }
+.section { margin-top: 24px; }
+.sectionHeader { display: flex; align-items: baseline; gap: 12px; margin: 0 0 8px 0; }
+.sectionHeader h3 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.rowCount { font-size: 13px; color: var(--muted); }
+.section h3 { margin: 0 0 8px 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.cellNull { color: var(--muted); font-style: italic; }
+.cellComplex { font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.dataTable { width: 100%; border-collapse: collapse; }
+.dataTable th, .dataTable td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; min-width: 140px; }
+.dataTable th { background: var(--row-alt); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); white-space: nowrap; }
+.pageSize { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.pageSize select { padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: white; }
+.cellClip {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 360px;
+  word-break: break-word;
+}
+.cellExpand {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+  width: 100%;
+}
+.cellExpand:hover .cellClip { background: var(--row-alt); }
+.cellModalBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.cellModal { background: white; border-radius: 8px; width: min(720px, 90vw); max-height: 80vh; display: flex; flex-direction: column; padding: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+.cellModalHeader { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.cellModalHeader h3 { margin: 0; font-size: 14px; }
+.cellModalBody { overflow: auto; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; background: var(--row-alt); padding: 12px; border-radius: 6px; }
+.scroll { overflow-x: auto; max-width: 100%; }
+.queryBox { width: 100%; min-height: 160px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; font-family: monospace; font-size: 13px; box-sizing: border-box; }
+.error { background: #fef1f2; color: var(--danger); border: 1px solid #fcd2d4; border-radius: 6px; padding: 10px 12px; margin-top: 12px; white-space: pre-wrap; }
+.note { color: var(--muted); margin-top: 8px; font-size: 13px; }
+.tag { display: inline-block; padding: 2px 6px; border-radius: 4px; background: var(--row-alt); color: var(--muted); font-size: 11px; margin-left: 6px; }

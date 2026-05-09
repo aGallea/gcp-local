@@ -16,3 +16,4 @@ class ServiceInfo(BaseModel):
 
 class ServiceList(BaseModel):
     services: list[ServiceInfo]
+    version: str

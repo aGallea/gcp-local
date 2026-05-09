@@ -110,6 +110,18 @@ class BigQueryService:
     def health(self) -> HealthStatus:
         return HealthStatus(ok=self._started, message="running" if self._started else "stopped")
 
+    @property
+    def storage(self) -> BigQueryStorage:
+        if self._storage is None:
+            raise RuntimeError("bigquery service not started")
+        return self._storage
+
+    @property
+    def runner(self) -> JobRunner:
+        if self._runner is None:
+            raise RuntimeError("bigquery service not started")
+        return self._runner
+
     def _make_connection(self, ctx: Context) -> BigQueryConnection:
         if ctx.persist:
             db_path = Path(ctx.data_dir) / "bigquery.duckdb"
