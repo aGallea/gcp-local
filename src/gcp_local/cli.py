@@ -112,7 +112,7 @@ def entrypoint() -> None:
     settings = build_settings(
         env=os.environ,
         registry=registry,
-        default_data_dir=Path("/data"),
+        default_data_dir=Path.cwd() / ".gcp-local-data",
     )
     sys.exit(asyncio.run(run(registry, settings)))
 
