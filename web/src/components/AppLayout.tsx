@@ -16,14 +16,18 @@ const SERVICE_LABELS: Record<string, string> = {
 export interface AppLayoutProps {
   services: ServiceInfo[];
   host: string;
+  version?: string;
   children: ReactNode;
 }
 
-export function AppLayout({ services, host, children }: AppLayoutProps) {
+export function AppLayout({ services, host, version, children }: AppLayoutProps) {
   return (
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
-        <div className={styles.brand}>gcp-local</div>
+        <div className={styles.brand}>
+          gcp-local
+          {version && <span className={styles.versionTag}>v{version}</span>}
+        </div>
         <div className={styles.section}>Services</div>
         <ul className={styles.nav}>
           {services.map((s) => {

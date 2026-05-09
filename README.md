@@ -70,7 +70,7 @@ A bundled web UI ships with the emulator. Open:
 http://localhost:4510/ui/
 ```
 
-What's in this release: a full GCS browser — buckets, blobs, folder navigation, create/delete folders, drag-and-drop upload, inline preview (text / JSON / image), and download. The other services (BigQuery, Secret Manager, Pub/Sub, Firestore) appear in the sidebar greyed out as "coming soon"; per-service follow-up specs will land each in turn.
+What's in this release: a full GCS browser — buckets, blobs, folder navigation, create/delete folders, drag-and-drop upload, inline preview (text / JSON / image), and download — plus a BigQuery browser with project / dataset / table navigation, schema view, paged row preview, and an ad-hoc SQL query console. The remaining services (Secret Manager, Pub/Sub, Firestore) appear in the sidebar greyed out as "coming soon"; per-service follow-up specs will land each in turn.
 
 The UI is local-only and performs no authentication. **Never expose port 4510 on a non-loopback interface** — anyone who can reach it can read and mutate every service's state.
 

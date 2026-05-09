@@ -41,11 +41,14 @@ def test_services_endpoint_lists_services() -> None:
     assert {s["name"] for s in body["services"]} == {"gcs", "bigquery"}
     gcs = next(s for s in body["services"] if s["name"] == "gcs")
     assert gcs["ports"] == [{"number": 4443, "protocol": "rest"}]
-    assert gcs["ui_supported"] is True  # GCS UI ships in this PR
+    assert gcs["ui_supported"] is True  # GCS UI ships
+    bq = next(s for s in body["services"] if s["name"] == "bigquery")
+    assert bq["ui_supported"] is True  # BigQuery UI ships
+    assert isinstance(body["version"], str) and body["version"]
 
 
 def test_unsupported_service_marked_false() -> None:
-    lc = FakeLifecycle([TinyService("bigquery", [Port(9050, "rest")])])
+    lc = FakeLifecycle([TinyService("pubsub", [Port(8085, "rest")])])
     r = _client(lc).get("/_emulator/ui-api/v1/services")
-    bq = r.json()["services"][0]
-    assert bq["ui_supported"] is False
+    svc = r.json()["services"][0]
+    assert svc["ui_supported"] is False

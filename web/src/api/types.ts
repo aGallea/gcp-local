@@ -11,6 +11,7 @@ export interface ServiceInfo {
 
 export interface ServiceList {
   services: ServiceInfo[];
+  version: string;
 }
 
 export interface BucketSummary {
@@ -61,4 +62,76 @@ export interface BlobMetadata {
   crc32c: string;
   metadata: Record<string, string>;
   preview: BlobPreview | null;
+}
+
+// ---- BigQuery -------------------------------------------------------------
+
+export interface BqFieldInfo {
+  name: string;
+  type: string;
+  mode: string;
+  fields: BqFieldInfo[] | null;
+}
+
+export interface BqProjectInfo {
+  project: string;
+  dataset_count: number;
+}
+
+export interface BqProjectList {
+  projects: BqProjectInfo[];
+}
+
+export interface BqDatasetSummary {
+  project: string;
+  dataset_id: string;
+  location: string;
+  create_time: string;
+  last_modified_time: string;
+}
+
+export interface BqDatasetList {
+  datasets: BqDatasetSummary[];
+}
+
+export interface BqTableSummary {
+  project: string;
+  dataset_id: string;
+  table_id: string;
+  create_time: string;
+  last_modified_time: string;
+  num_rows: number;
+}
+
+export interface BqTableList {
+  tables: BqTableSummary[];
+}
+
+export interface BqTableMetadata {
+  project: string;
+  dataset_id: string;
+  table_id: string;
+  table_schema: BqFieldInfo[];
+  create_time: string;
+  last_modified_time: string;
+  description: string | null;
+  num_rows: number;
+}
+
+export type BqCell = string | number | boolean | null | BqCell[] | { [k: string]: BqCell };
+
+export interface BqTablePreview {
+  table_schema: BqFieldInfo[];
+  rows: BqCell[][];
+  total_rows: number;
+  next_offset: number | null;
+}
+
+export interface BqQueryResult {
+  job_id: string;
+  statement_type: string;
+  table_schema: BqFieldInfo[];
+  rows: BqCell[][];
+  total_rows: number;
+  error: string | null;
 }

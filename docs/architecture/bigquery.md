@@ -230,6 +230,19 @@ Unit tests under `tests/unit/services/bigquery/` — one file per concern: `test
 
 Integration tests at `tests/integration/test_bigquery_integration.py` drive the real `google-cloud-bigquery` Python client against an in-process emulator (booted by the `emulator` fixture in `tests/integration/conftest.py`). The integration suite covers dataset/table CRUD, query + DML round-trips, streaming inserts, INFORMATION_SCHEMA, error paths, multi-page result iteration via `to_dataframe()`, plus six load-job cases including a ~6 MiB synthetic NDJSON payload that forces the official client onto the resumable upload path.
 
+## Browser UI consumer
+
+`src/gcp_local/core/ui_api/bigquery.py` exposes a small, internal JSON API at `/_emulator/ui-api/v1/bigquery/...` that the bundled SPA calls. It is **not** part of the BigQuery wire contract and clients must not rely on it. The router reads and writes the same `BigQueryStorage` and `JobRunner` instances the public REST routes use — there is no shadow state. A table created by the official `google-cloud-bigquery` client appears in the UI immediately, and a `CREATE TABLE` issued from the UI's query console is visible to clients on port 9050 without any sync step.
+
+The UI surface is shaped for browser display rather than wire fidelity:
+
+- **Schemas** are serialized with `snake_case` keys (`dataset_id`, `table_schema`, `last_modified_time`) instead of the `camelCase` BQ wire format. This keeps the SPA's TypeScript types ergonomic without forcing the wire layer to change.
+- **Cell values** in `preview` and `queries` responses are converted by `_cell_to_jsonable`: primitives pass through, `Decimal`/`bytes`/`date`/`time`/`datetime` are stringified (bytes use base64), and `list`/`tuple`/`dict` recurse. The wire surface keeps emitting BQ's `{"v": ...}` envelope; the ui-api collapses it to bare JSON for display.
+- **Queries** are executed by reusing `JobRunner.run_query()` so error mapping stays consistent (`invalidQuery` / `notFound` / `internalError`). The job runs synchronously, the UI immediately reads the first page via `JobRunner.read_page`, and the Job stays in the `JobRunner._jobs` cache for the standard 1-hour TTL — the UI does not eagerly evict it. The query endpoint always returns `200`; runtime errors come back inline as `result.error` (mirroring real BigQuery's behavior of stashing failures in `errorResult` rather than raising HTTP 5xx).
+- **Project discovery** is derived from the catalog — `GET /bigquery/projects` runs `SELECT project, count(*) FROM _gcp_local_meta.datasets GROUP BY project`. Projects only show up once they have at least one dataset; users open arbitrary project IDs through the "Open project" dialog to seed the first dataset.
+
+For the broader UI architecture (build pipeline, dev loop, recipe for adding a new service surface), see [`docs/development/ui.md`](../development/ui.md).
+
 ## Internals-level limitations
 
 These are the gaps a consumer should know about. User-visible "what's not emulated" lives in [`docs/services/bigquery.md`](../services/bigquery.md); this list is internals-flavored.

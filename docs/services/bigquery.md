@@ -460,6 +460,35 @@ These are intentional v1 limitations, not bugs.
 
 ---
 
+## Browser UI
+
+A bundled web UI lets you inspect and manipulate BigQuery state without writing any code. Open:
+
+```
+http://localhost:4510/ui/bigquery
+```
+
+The UI is served by the admin port (4510), not the BigQuery wire port (9050). What you can do today:
+
+- See the list of projects that have datasets, with dataset counts.
+- Open any project ID (even one without datasets) to start managing it.
+- List, create, and delete datasets per project. Empty datasets delete cleanly; non-empty datasets show a "not_empty" error and require dropping their tables first (or `delete_contents=true` from the CLI).
+- List tables in a dataset and delete a table.
+- Inspect a table: schema (including nested `RECORD`/`STRUCT` and `REPEATED` modes), row count, created / last-modified timestamps, and a paged preview of the first rows.
+- Run ad-hoc queries from a SQL console scoped to the project. `SELECT` results render in a table; DML statements (`INSERT`/`UPDATE`/`DELETE`/`MERGE`) execute and report the statement type. Errors come back inline.
+
+The UI reads and writes the **same in-process state** as the BigQuery REST API on port 9050. Tables created by `google-cloud-bigquery` show up in the UI immediately, and rows inserted via the UI's query console are visible to client libraries with no delay. There is no auth; the emulator is local-only.
+
+Under the hood the UI calls a separate, internal namespace at `/_emulator/ui-api/v1/bigquery/...` — versioned and explicitly not part of the BigQuery wire contract. Client libraries (`google-cloud-bigquery`, `bq` CLI, etc.) continue to talk to the public REST surface on port 9050.
+
+Limits:
+
+- Table preview pages return up to 500 rows (default 50).
+- Query console caps result rows to the first 200 rows; for larger result sets, page through `jobs.getQueryResults` from a client library.
+- Cell values are JSON-encoded for display: `BYTES` are base64, `NUMERIC`/`BIGNUMERIC`/`DATE`/`TIME`/`TIMESTAMP`/`DATETIME` are stringified; `RECORD` and `REPEATED` values render as JSON.
+
+---
+
 ## Caveats / gotchas
 
 **Async event loop blocking.** The `google-cloud-bigquery` client is synchronous (uses `requests` under the hood). If you run both the emulator and client code in the same async event loop (e.g. in an async pytest test), calling BQ methods directly will block the loop and prevent the in-process uvicorn from serving the request — the call hangs. Dispatch all client calls to a thread:

@@ -13,6 +13,18 @@
 .brand {
   font-weight: 700;
   margin-bottom: 24px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.versionTag {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--muted);
+  background: #e4e4e7;
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
 .section {
@@ -62,6 +74,7 @@
   align-items: center;
   justify-content: flex-end;
   padding: 0 16px;
+  gap: 16px;
 }
 
 .host {
