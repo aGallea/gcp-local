@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/icon.png" alt="gcp-local" width="160" />
+</p>
+
 # gcp-local
 
 A local emulator for Google Cloud services — the GCP counterpart to LocalStack.

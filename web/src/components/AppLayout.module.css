@@ -14,8 +14,17 @@
   font-weight: 700;
   margin-bottom: 24px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+}
+
+.brandIcon {
+  display: block;
+  flex-shrink: 0;
+}
+
+.brandName {
+  font-weight: 700;
 }
 
 .versionTag {
