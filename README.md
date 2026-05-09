@@ -111,6 +111,12 @@ http://localhost:4510/ui/
 
 What's in this release: a full GCS browser — buckets, blobs, folder navigation, create/delete folders, drag-and-drop upload, inline preview (text / JSON / image), and download — plus a BigQuery browser with project / dataset / table navigation, schema view, paged row preview, and an ad-hoc SQL query console. The remaining services (Secret Manager, Pub/Sub, Firestore) appear in the sidebar greyed out as "coming soon"; per-service follow-up specs will land each in turn.
 
+| GCS — buckets | GCS — folder navigation |
+|:--:|:--:|
+| <img src="docs/assets/screenshots/gcs-buckets.png" alt="GCS buckets list" /> | <img src="docs/assets/screenshots/gcs-folder.png" alt="GCS folder navigation" /> |
+| **BigQuery — tables** | **BigQuery — schema & row preview** |
+| <img src="docs/assets/screenshots/bigquery-tables.png" alt="BigQuery table list" /> | <img src="docs/assets/screenshots/bigquery-table.png" alt="BigQuery table schema and preview" /> |
+
 The UI is local-only and performs no authentication. **Never expose port 4510 on a non-loopback interface** — anyone who can reach it can read and mutate every service's state.
 
 ## Connect a client
