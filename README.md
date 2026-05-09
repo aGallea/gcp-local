@@ -1,13 +1,48 @@
+<h3 align="center">
+  <a name="readme-top"></a>
+  <img src="docs/assets/icon.png" height="200" alt="gcp-local" />
+</h3>
+
+<h1 align="center">gcp-local</h1>
+
 <p align="center">
-  <img src="docs/assets/icon.png" alt="gcp-local" width="160" />
+  <strong>A local emulator for Google Cloud services — the GCP counterpart to LocalStack</strong>
 </p>
 
-# gcp-local
+<p align="center">
+  <a href="#readme">
+    <img src="https://img.shields.io/badge/README-blue?style=for-the-badge" alt="README" />
+  </a>
+  <a href="docs/architecture/overview.md">
+    <img src="https://img.shields.io/badge/ARCHITECTURE-555?style=for-the-badge" alt="Architecture" />
+  </a>
+  <a href="ROADMAP.md">
+    <img src="https://img.shields.io/badge/ROADMAP-555?style=for-the-badge" alt="Roadmap" />
+  </a>
+  <a href="CONTRIBUTING.md">
+    <img src="https://img.shields.io/badge/CONTRIBUTING-555?style=for-the-badge" alt="Contributing" />
+  </a>
+</p>
 
-A local emulator for Google Cloud services — the GCP counterpart to LocalStack.
+<div align="center">
+  <a href="https://github.com/aGallea/gcp-local/actions/workflows/ci.yml">
+    <img src="https://github.com/aGallea/gcp-local/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" />
+  </a>
+  <a href="https://github.com/aGallea/gcp-local/releases/latest">
+    <img src="https://img.shields.io/github/v/release/aGallea/gcp-local" alt="Latest Release" />
+  </a>
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.13%2B-blue.svg" alt="Python 3.13+" />
+  </a>
+  <a href="https://github.com/aGallea/gcp-local/pkgs/container/gcp-local">
+    <img src="https://img.shields.io/badge/ghcr.io-gcp--local-1f6feb?logo=docker&logoColor=white" alt="Docker image on ghcr.io" />
+  </a>
+</div>
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-<!-- TODO: add CI badge once the repo is public and Actions runs against master -->
+---
 
 `gcp-local` lets you point the official `google-cloud-*` Python client libraries at `localhost` and run integration tests, prototypes, and local developer workflows against a real-shaped emulator. No real GCP credentials, no real billing, no flaky network.
 
@@ -75,6 +110,12 @@ http://localhost:4510/ui/
 ```
 
 What's in this release: a full GCS browser — buckets, blobs, folder navigation, create/delete folders, drag-and-drop upload, inline preview (text / JSON / image), and download — plus a BigQuery browser with project / dataset / table navigation, schema view, paged row preview, and an ad-hoc SQL query console. The remaining services (Secret Manager, Pub/Sub, Firestore) appear in the sidebar greyed out as "coming soon"; per-service follow-up specs will land each in turn.
+
+| GCS — buckets | GCS — folder navigation |
+|:--:|:--:|
+| <img src="docs/assets/screenshots/gcs-buckets.png" alt="GCS buckets list" /> | <img src="docs/assets/screenshots/gcs-folder.png" alt="GCS folder navigation" /> |
+| **BigQuery — tables** | **BigQuery — schema & row preview** |
+| <img src="docs/assets/screenshots/bigquery-tables.png" alt="BigQuery table list" /> | <img src="docs/assets/screenshots/bigquery-table.png" alt="BigQuery table schema and preview" /> |
 
 The UI is local-only and performs no authentication. **Never expose port 4510 on a non-loopback interface** — anyone who can reach it can read and mutate every service's state.
 
