@@ -226,6 +226,9 @@ class JobRunner:
         self._jobs[(rec.project, rec.job_id)] = rec
         self._job_ended_at[(rec.project, rec.job_id)] = self._clock()
 
+    async def schema_for(self, job_id: str) -> list[FieldSchema]:
+        return self._job_schemas.get(job_id, [])
+
     async def read_page(self, job_id: str, *, page_size: int, page_token: str | None) -> JobPage:
         offset = _decode_token(page_token)
         schema = self._job_schemas.get(job_id, [])

@@ -11,7 +11,7 @@ Default port: **9050**.
 - Dataset lifecycle: `create`, `get`, `list`, `update`, `patch`, `delete`
 - Table lifecycle: `create`, `get`, `list`, `update`, `patch`, `delete` — including schemas with `RECORD`/`STRUCT`, `REPEATED`/`ARRAY`, `NULLABLE`, and `REQUIRED` modes
 - Query jobs (`jobs.insert` with `QueryJobConfiguration`) and the synchronous `jobs.query` endpoint
-- `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.getQueryResults` with `pageToken` paging
+- `jobs.get`, `jobs.list`, `jobs.cancel`, `jobs.getQueryResults` with `pageToken` paging (and the BigQuery `maxResults=0` "poll for completion" convention used by python-bigquery's `QueryJob.result()` — schema + `totalRows` only, no `rows` or `pageToken`)
 - DML: `INSERT`, `UPDATE`, `DELETE`, `MERGE`
 - Streaming inserts: `tabledata.insertAll` — rows immediately visible
 - Inline-payload load jobs: `client.load_table_from_json(...)` and `client.load_table_from_file(..., source_format="NEWLINE_DELIMITED_JSON" | "CSV")` (see [Load jobs](#load-jobs))
@@ -510,6 +510,8 @@ See `tests/integration/test_bigquery_integration.py` for the full pattern used i
 ```bash
 pip install db-dtypes pyarrow
 ```
+
+If `google-cloud-bigquery-storage` is also installed, the python client may try to fetch rows via the BigQuery Storage gRPC Read API. The emulator does **not** implement this API; the gRPC channel will try to talk HTTP/2 to the emulator's REST port and never get a response. Either uninstall `google-cloud-bigquery-storage` in environments that talk to the emulator, or pass `create_bqstorage_client=False` to `result().to_dataframe(...)` / `to_arrow(...)`.
 
 **Project IDs.** The emulator accepts any string that fits the URL path — no allow-list is enforced. Different project IDs are fully isolated (same dataset and table names under different projects are separate resources).
 
