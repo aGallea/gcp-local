@@ -33,6 +33,10 @@ Releases are managed by [release-please](https://github.com/googleapis/release-p
 
 - **Default `data_dir` on the host**: `cli.entrypoint()` now defaults to `./.gcp-local-data` (cwd-relative) instead of `/data`, which was unwritable when running outside Docker. The Docker image keeps the previous behavior by setting `GCP_LOCAL_DATA_DIR=/data` in the Dockerfile env.
 
+### Fixed
+
+- **bigquery**: classify DuckDB `BinderException`, `ParserException`, `SyntaxException`, `InvalidInputException`, `InvalidTypeException`, `TypeMismatchException`, `ConversionException`, and `OutOfRangeException` as `invalidQuery` (terminal) instead of the catch-all `internalError` (retriable). The google-cloud-bigquery client retries on `internalError` for its full retry budget (~2400s) before surfacing the failure, so a misclassified binder error (e.g. `SELECT missing_col FROM t`) left callers hung indefinitely. The error now bubbles up in <1s. ([#34](https://github.com/aGallea/gcp-local/issues/34))
+
 ## [0.4.0](https://github.com/aGallea/gcp-local/compare/v0.3.0...v0.4.0) (2026-05-04)
 
 

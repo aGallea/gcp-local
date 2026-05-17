@@ -222,7 +222,10 @@ A second helper, `errors.py::make_error_response(code, message, reason)`, builds
 |---|---|
 | `UnsupportedSql` / sqlglot parse error / `ValueError` / `InvalidQuery` | `invalidQuery` |
 | `DatasetNotFound` / `TableNotFound` / `duckdb.CatalogException` | `notFound` |
+| `duckdb.BinderException` / `ParserException` / `SyntaxException` / `InvalidInputException` / `InvalidTypeException` / `TypeMismatchException` / `ConversionException` / `OutOfRangeException` | `invalidQuery` |
 | Uncaught | `internalError` |
+
+> **Note:** the second `invalidQuery` row is load-bearing. The `google-cloud-bigquery` client treats `internalError` as a *retriable* failure and retries for its full retry budget (~2400s) before surfacing the error. Misclassifying a deterministic SQL error (column not in scope, parse error, type mismatch) as `internalError` therefore leaves callers hung indefinitely — see issue #34.
 
 ## Tests
 

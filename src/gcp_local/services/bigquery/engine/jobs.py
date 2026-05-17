@@ -77,6 +77,26 @@ class JobRunner:
             rec = self._failed_record(
                 project, job_id, sql, start, statement_type, "notFound", str(e)
             )
+        except (
+            duckdb.BinderException,
+            duckdb.ParserException,
+            duckdb.SyntaxException,
+            duckdb.InvalidInputException,
+            duckdb.InvalidTypeException,
+            duckdb.TypeMismatchException,
+            duckdb.ConversionException,
+            duckdb.OutOfRangeException,
+        ) as e:
+            # Deterministic, user-input SQL errors (column not in scope, parse
+            # error, syntax error, type-conversion failure, ...). Must map to
+            # `invalidQuery` rather than the generic `internalError` below —
+            # the google-cloud-bigquery client treats `reason: internalError`
+            # as retriable and waits up to its 2400s retry budget before
+            # surfacing the error, leaving the caller hung. `invalidQuery` is
+            # terminal and bubbles up immediately. See issue #34.
+            rec = self._failed_record(
+                project, job_id, sql, start, statement_type, "invalidQuery", str(e)
+            )
         except Exception as e:
             rec = self._failed_record(
                 project, job_id, sql, start, statement_type, "internalError", str(e)

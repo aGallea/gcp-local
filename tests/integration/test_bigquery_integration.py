@@ -253,6 +253,39 @@ async def test_query_parse_error_is_bad_request(
 
 
 @pytest.mark.asyncio
+async def test_query_unknown_column_is_bad_request_not_hang(
+    emulator: dict[str, int],
+) -> None:
+    """SELECTing a column that doesn't exist on an existing table must
+    surface as ``BadRequest`` quickly — not retry for the client's full
+    retry budget (~2400s) and hang the caller (issue #34).
+
+    The wall-clock assertion (≤30s) is a safety net: a regression that
+    re-classifies the binder error as ``internalError`` would otherwise
+    block the whole test run for 40 minutes before failing.
+    """
+    client = _client(emulator)
+    await _run(
+        lambda: client.create_dataset(bigquery.Dataset(DatasetReference("test-project", "ds_bq34")))
+    )
+    table = bigquery.Table(
+        TableReference(DatasetReference("test-project", "ds_bq34"), "tbl"),
+        schema=[SchemaField("id", "INT64", mode="REQUIRED")],
+    )
+    await _run(lambda: client.create_table(table))
+
+    async def _drive() -> None:
+        with pytest.raises(gax_exceptions.BadRequest):
+            await _run(
+                lambda: client.query(
+                    "SELECT does_not_exist FROM `test-project.ds_bq34.tbl`"
+                ).result()
+            )
+
+    await asyncio.wait_for(_drive(), timeout=30)
+
+
+@pytest.mark.asyncio
 async def test_information_schema_tables(emulator: dict[str, int]) -> None:
     client = _client(emulator)
     await _run(
