@@ -97,6 +97,23 @@ async def test_run_select_unknown_table_records_not_found(
     assert rec.error_result["reason"] in ("notFound", "invalidQuery")
 
 
+async def test_run_select_unknown_column_records_invalid_query(
+    runner: JobRunner,
+) -> None:
+    """A SELECT against an existing table referencing a column that doesn't
+    exist must be classified as ``invalidQuery`` — never ``internalError``.
+
+    The google-cloud-bigquery client retries on ``internalError`` for its
+    full retry budget (~2400s) before surfacing the failure, so a
+    misclassified binder error leaves callers hung indefinitely (issue #34).
+    """
+    rec = await runner.run_query(project="p", job_id="j6", sql="SELECT does_not_exist FROM `p.d.t`")
+    assert rec.state == "DONE"
+    assert rec.error_result is not None
+    assert rec.error_result["reason"] == "invalidQuery"
+    assert "does_not_exist" in rec.error_result["message"]
+
+
 async def test_get_and_list_jobs(runner: JobRunner) -> None:
     await runner.run_query(project="p", job_id="j1", sql="SELECT 1")
     await runner.run_query(project="p", job_id="j2", sql="SELECT 2")
