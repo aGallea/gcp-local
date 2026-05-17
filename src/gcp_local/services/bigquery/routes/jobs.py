@@ -75,6 +75,40 @@ def _schema_to_api(schema: list[FieldSchema]) -> dict[str, Any]:
     return {"fields": [{"name": f.name, "type": f.type, "mode": f.mode} for f in schema]}
 
 
+_DEFAULT_PAGE_SIZE = 10000
+
+
+async def _attach_page(
+    payload: dict[str, Any],
+    runner: JobRunner,
+    job_id: str,
+    *,
+    page_size: int,
+    page_token: str | None,
+) -> None:
+    """Attach result-page fields to a query response.
+
+    `maxResults=0` is BigQuery's "poll for completion, don't return rows yet"
+    convention. The real BigQuery REST API responds with the `schema` but
+    neither `rows` nor `pageToken` in that case (see the `python-bigquery`
+    source — class `QueryJob.result` notes "we're missing rows and there's no
+    next page token"). The client library uses the absence of `rows` as the
+    signal to refetch from scratch instead of treating the empty page as the
+    first page of results. Emitting `rows: []` + a `pageToken` would
+    otherwise confuse pagination (and on `to_dataframe()` would push the
+    client onto the BigQuery Storage gRPC path, which the emulator does not
+    implement — issue #34).
+    """
+    schema = await runner.schema_for(job_id)
+    payload["schema"] = _schema_to_api(schema)
+    if page_size == 0:
+        return
+    page = await runner.read_page(job_id, page_size=page_size, page_token=page_token)
+    payload["rows"] = _rows_to_wire(page.rows, page.schema)
+    if page.next_page_token is not None:
+        payload["pageToken"] = page.next_page_token
+
+
 def build_router(runner: JobRunner, load_runner: LoadRunner | None = None) -> APIRouter:
     router = APIRouter(prefix="/bigquery/v2/projects")
 
@@ -148,7 +182,10 @@ def build_router(runner: JobRunner, load_runner: LoadRunner | None = None) -> AP
         try:
             validate_project_id(project)
             sql = body.get("query") or ""
-            page_size = int(body.get("maxResults") or 10000)
+            raw_max = body.get("maxResults")
+            # `maxResults=0` is the BigQuery convention for "poll for completion,
+            # don't return rows yet" — distinct from "maxResults not provided".
+            page_size = int(raw_max) if raw_max is not None else _DEFAULT_PAGE_SIZE
             job_id = body.get("requestId") or f"job_{uuid.uuid4().hex}"
             validate_job_id(job_id)
             rec = await runner.run_query(project=project, job_id=job_id, sql=sql)
@@ -164,11 +201,9 @@ def build_router(runner: JobRunner, load_runner: LoadRunner | None = None) -> AP
                 payload["jobComplete"] = True
                 return payload
             if rec.statement_type == "SELECT":
-                page = await runner.read_page(rec.job_id, page_size=page_size, page_token=None)
-                payload["schema"] = _schema_to_api(page.schema)
-                payload["rows"] = _rows_to_wire(page.rows, page.schema)
-                if page.next_page_token is not None:
-                    payload["pageToken"] = page.next_page_token
+                await _attach_page(
+                    payload, runner, rec.job_id, page_size=page_size, page_token=None
+                )
             return payload
         except InvalidName as e:
             return bigquery_error_response(e).to_response()
@@ -177,7 +212,7 @@ def build_router(runner: JobRunner, load_runner: LoadRunner | None = None) -> AP
     async def get_query_results(
         project: str,
         job_id: str = Path(...),
-        maxResults: int = 10000,
+        maxResults: int | None = None,
         pageToken: str | None = None,
     ) -> Any:
         try:
@@ -194,11 +229,10 @@ def build_router(runner: JobRunner, load_runner: LoadRunner | None = None) -> AP
                 payload["errors"] = rec.errors
                 return payload
             if rec.statement_type == "SELECT":
-                page = await runner.read_page(job_id, page_size=maxResults, page_token=pageToken)
-                payload["schema"] = _schema_to_api(page.schema)
-                payload["rows"] = _rows_to_wire(page.rows, page.schema)
-                if page.next_page_token is not None:
-                    payload["pageToken"] = page.next_page_token
+                page_size = maxResults if maxResults is not None else _DEFAULT_PAGE_SIZE
+                await _attach_page(
+                    payload, runner, job_id, page_size=page_size, page_token=pageToken
+                )
             else:
                 # DML — no rows to return
                 payload["schema"] = {"fields": []}

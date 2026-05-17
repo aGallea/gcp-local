@@ -96,6 +96,37 @@ def test_jobs_get_query_results_paging(client: TestClient) -> None:
     assert len(page2["rows"]) == 1
 
 
+def test_jobs_get_query_results_max_results_zero_is_poll_only(
+    client: TestClient,
+) -> None:
+    """Regression for issue #34.
+
+    `getQueryResults?maxResults=0` is the BigQuery convention for "tell me
+    the job state, don't return rows yet" used by python-bigquery during
+    `QueryJob.result()` polling. The response must include schema and
+    totalRows but neither `rows` nor `pageToken` — the client treats absence
+    of `rows` as the signal that the empty page is *not* the first real page
+    of results and re-fetches from scratch. Emitting `rows: []` together with
+    a `pageToken` confuses the iterator and (when google-cloud-bigquery-
+    storage is installed) pushes `to_dataframe()` onto the gRPC path the
+    emulator doesn't implement, causing the client to hang in `select()`.
+    """
+    _seed_rows(client)
+    client.post(
+        "/bigquery/v2/projects/p/jobs",
+        json={
+            "jobReference": {"projectId": "p", "jobId": "jZ"},
+            "configuration": {"query": {"query": "SELECT id FROM `p.d.t` ORDER BY id"}},
+        },
+    )
+    body = client.get("/bigquery/v2/projects/p/queries/jZ", params={"maxResults": 0}).json()
+    assert body["jobComplete"] is True
+    assert body["totalRows"] == "3"
+    assert body["schema"]["fields"][0]["name"] == "id"
+    assert "rows" not in body
+    assert "pageToken" not in body
+
+
 def test_jobs_query_parse_error_returns_error_result(client: TestClient) -> None:
     r = client.post(
         "/bigquery/v2/projects/p/queries",

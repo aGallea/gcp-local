@@ -173,6 +173,66 @@ async def test_paging_with_max_results(emulator: dict[str, int]) -> None:
 
 
 @pytest.mark.asyncio
+async def test_filtered_select_shapes_do_not_hang(emulator: dict[str, int]) -> None:
+    """Regression for issue #34: filtered SELECT without LIMIT and multi-column
+    ORDER BY used to hang because `getQueryResults?maxResults=0` returned
+    `rows: []` + a `pageToken`, while real BigQuery returns neither — confusing
+    the python client's first-page detection logic in `QueryJob.result()`.
+    """
+    client = _client(emulator)
+    await _run(
+        lambda: client.create_dataset(bigquery.Dataset(DatasetReference("test-project", "ds_34")))
+    )
+    schema = [
+        SchemaField("response_idx", "INT64"),
+        SchemaField("metric_name", "STRING"),
+        SchemaField("experiment", "STRING"),
+    ]
+    table = await _run(
+        lambda: client.create_table(
+            bigquery.Table(
+                TableReference(DatasetReference("test-project", "ds_34"), "raw"),
+                schema=schema,
+            )
+        )
+    )
+    rows = [{"response_idx": i, "metric_name": f"m{i}", "experiment": "X"} for i in range(6)]
+    rows += [{"response_idx": i, "metric_name": f"n{i}", "experiment": "Y"} for i in range(4)]
+    await _run(lambda: client.insert_rows_json(table, rows))
+
+    tbl = "`test-project.ds_34.raw`"
+    cases: list[tuple[str, str, int]] = [
+        ("count", f"SELECT COUNT(*) AS n FROM {tbl} WHERE experiment = 'X'", 1),
+        (
+            "where_limit",
+            f"SELECT response_idx, metric_name FROM {tbl} WHERE experiment = 'X' LIMIT 3",
+            3,
+        ),
+        (
+            "where_order_single_limit",
+            f"SELECT response_idx, metric_name FROM {tbl} WHERE experiment = 'X' ORDER BY response_idx LIMIT 3",
+            3,
+        ),
+        (
+            "where_no_limit",
+            f"SELECT response_idx, metric_name FROM {tbl} WHERE experiment = 'X'",
+            6,
+        ),
+        (
+            "where_order_multi_limit",
+            f"SELECT response_idx, metric_name FROM {tbl} WHERE experiment = 'X' ORDER BY response_idx, metric_name LIMIT 3",
+            3,
+        ),
+    ]
+    for name, sql, expected in cases:
+        got = await asyncio.wait_for(
+            _run(lambda s=sql: list(client.query(s).result())),
+            timeout=10.0,
+        )
+        assert len(got) == expected, f"{name}: expected {expected} rows, got {len(got)}"
+
+
+@pytest.mark.asyncio
 async def test_query_unknown_table_raises_not_found(
     emulator: dict[str, int],
 ) -> None:
