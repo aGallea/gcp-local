@@ -59,6 +59,7 @@ Alpha. Five services are implemented today; v1 is feature-complete. See [ROADMAP
 | Secret Manager | Alpha | 8086 | gRPC | [usage](docs/services/secret-manager.md) | [internals](docs/architecture/secret-manager.md) |
 | Pub/Sub | Alpha | 8085 | gRPC | [usage](docs/services/pubsub.md) | [internals](docs/architecture/pubsub.md) |
 | Firestore | Alpha | 8080 | gRPC | [usage](docs/services/firestore.md) | [internals](docs/architecture/firestore.md) |
+| Metadata server | Alpha | 8091 | REST | [usage](docs/services/metadata.md) | [internals](docs/architecture/metadata.md) |
 
 Status vocabulary: **Stable** = feature-complete for v1, **Alpha** = implemented and in use but may shift, **Planned** = committed to v1 but not started, **Future** = post-v1.
 

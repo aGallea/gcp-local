@@ -14,6 +14,13 @@ This guide covers running `gcp-local` via Docker, docker-compose, and Kubernetes
 | Secret Manager  | 8086 | gRPC; no standard env var (use `client_options.api_endpoint`) |
 | Pub/Sub         | 8085 | gRPC; client honors `PUBSUB_EMULATOR_HOST` |
 | Firestore       | 8080 | gRPC; client honors `FIRESTORE_EMULATOR_HOST` |
+| Metadata server | 8091 | HTTP; clients honor `GCE_METADATA_HOST=<host>:8091` |
+
+### Metadata server (opting out of `AnonymousCredentials`)
+
+The metadata server emulates GCE/GKE's `metadata.google.internal` endpoint so unmodified ADC client code — `bigquery.Client()` with no arguments — can mint a stub token and route subsequent traffic through the rest of `gcp-local`. To use it from a pod, set `GCE_METADATA_HOST` (and `GCE_METADATA_IP`) to the gcp-local hostname:port alongside the per-service `*_EMULATOR_HOST` variables you already set. See [`docs/services/metadata.md`](services/metadata.md) for a copy-pasteable manifest.
+
+To run without the metadata server: `SERVICES=gcs,bigquery,pubsub,firestore,secret_manager`.
 
 ## Building the image
 

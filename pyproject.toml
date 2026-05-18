@@ -62,6 +62,7 @@ secret_manager = "gcp_local.services.secret_manager:SecretManagerService"
 bigquery = "gcp_local.services.bigquery:BigQueryService"
 pubsub = "gcp_local.services.pubsub:PubSubService"
 firestore = "gcp_local.services.firestore:FirestoreService"
+metadata = "gcp_local.services.metadata:MetadataService"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gcp_local"]

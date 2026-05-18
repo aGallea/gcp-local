@@ -16,12 +16,14 @@ async def test_health_reports_all_services_healthy(emulator):
         "bigquery",
         "pubsub",
         "firestore",
+        "metadata",
     }
     assert body["services"]["gcs"]["ok"] is True
     assert body["services"]["secret_manager"]["ok"] is True
     assert body["services"]["bigquery"]["ok"] is True
     assert body["services"]["pubsub"]["ok"] is True
     assert body["services"]["firestore"]["ok"] is True
+    assert body["services"]["metadata"]["ok"] is True
 
 
 async def test_services_endpoint_lists_both(emulator):
@@ -30,7 +32,7 @@ async def test_services_endpoint_lists_both(emulator):
         r = await c.get(f"{url}/_emulator/services")
     assert r.status_code == 200
     names = {s["name"] for s in r.json()["services"]}
-    assert names == {"gcs", "secret_manager", "bigquery", "pubsub", "firestore"}
+    assert names == {"gcs", "secret_manager", "bigquery", "pubsub", "firestore", "metadata"}
 
 
 async def test_reset_all_succeeds(emulator):
