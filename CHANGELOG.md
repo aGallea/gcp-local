@@ -4,6 +4,30 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.6.0](https://github.com/aGallea/gcp-local/compare/v0.5.1...v0.6.0) (2026-05-18)
+
+
+### Added
+
+* **metadata:** /identity returns audience-bound JWT ([8da651e](https://github.com/aGallea/gcp-local/commit/8da651e015d652d5803dbe1d61878b89054c9223))
+* **metadata:** /project/project-id and /project/numeric-project-id ([e763ab6](https://github.com/aGallea/gcp-local/commit/e763ab624fe7747791f824595b35ad3ba6b87650))
+* **metadata:** /token returns stub access token ([3082516](https://github.com/aGallea/gcp-local/commit/3082516ff53bffca82e94a3f194187fd6406beca))
+* **metadata:** app factory enforces Metadata-Flavor header ([bc7d0b5](https://github.com/aGallea/gcp-local/commit/bc7d0b543b8ace5f1bc77e6015d166f8b9a1abd8))
+* **metadata:** build_access_token returns stub Bearer token ([5c37640](https://github.com/aGallea/gcp-local/commit/5c37640c9e08de82a28579d6dc2a81a61b5b309e))
+* **metadata:** build_id_token returns audience-bound JWT ([ed981ce](https://github.com/aGallea/gcp-local/commit/ed981cee95e1e78c6efe8a7b5fe5d92a0d87375e))
+* **metadata:** fake GCE metadata server for unmodified ADC clients ([767e8bc](https://github.com/aGallea/gcp-local/commit/767e8bc8e1a520194231ff779ee5f63b9f154c18))
+* **metadata:** scaffold MetadataService and entry point ([2ecc715](https://github.com/aGallea/gcp-local/commit/2ecc7153ba8c1f558460caf608d82e194aa04a21))
+* **metadata:** service-account listing, recursive, email, scopes ([1bb3372](https://github.com/aGallea/gcp-local/commit/1bb3372970823fc8a2b53d2f8ae48a89f44a3e82))
+* **metadata:** wire uvicorn lifecycle in MetadataService ([ff9f766](https://github.com/aGallea/gcp-local/commit/ff9f766b87baaecaa639d2eb58ccee0456933776))
+
+
+### Fixed
+
+* **bigquery:** classify deterministic DuckDB SQL errors as invalidQuery ([6ac46b0](https://github.com/aGallea/gcp-local/commit/6ac46b0c7f1dc009f8a498673b8b2dcf02099785))
+* **bigquery:** classify deterministic DuckDB SQL errors as invalidQuery ([8b61959](https://github.com/aGallea/gcp-local/commit/8b61959fc83437c14810818dbd5e274984688ed4)), closes [#34](https://github.com/aGallea/gcp-local/issues/34)
+* **bigquery:** omit rows + pageToken in getQueryResults?maxResults=0 ([2085309](https://github.com/aGallea/gcp-local/commit/20853091c0aa49652704bd0a7ef22c741443636a))
+* **metadata:** drop premature build_id_token stub ([1a3f2e4](https://github.com/aGallea/gcp-local/commit/1a3f2e4df0789e1c6326444d8dbe5c744db2e9f8))
+
 ## [0.5.1](https://github.com/aGallea/gcp-local/compare/v0.5.0...v0.5.1) (2026-05-09)
 
 
