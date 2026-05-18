@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from gcp_local.services.metadata.tokens import build_access_token
+from gcp_local.services.metadata.tokens import build_access_token, build_id_token
 
 _METADATA_FLAVOR_HEADER = "Metadata-Flavor"
 _METADATA_FLAVOR_VALUE = "Google"
@@ -128,5 +128,25 @@ def build_app() -> FastAPI:
         if _resolve_alias(alias) is None:
             return PlainTextResponse("alias not found", status_code=404)
         return _json_response(build_access_token())  # type: ignore[arg-type]
+
+    @app.get(
+        "/computeMetadata/v1/instance/service-accounts/{alias}/identity",
+        response_class=PlainTextResponse,
+    )
+    async def _sa_identity(alias: str, audience: str | None = None) -> Response:
+        if _resolve_alias(alias) is None:
+            return PlainTextResponse("alias not found", status_code=404)
+        if not audience:
+            return PlainTextResponse(
+                "non-empty audience parameter required",
+                status_code=400,
+            )
+        return PlainTextResponse(
+            build_id_token(
+                audience=audience,
+                email=_email(),
+                numeric_project_id=_numeric_project_id(),
+            )
+        )
 
     return app

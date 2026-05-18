@@ -204,3 +204,53 @@ async def test_token_endpoint_rejects_unknown_alias_with_404(client: httpx.Async
             headers={"Metadata-Flavor": "Google"},
         )
     assert resp.status_code == 404
+
+
+async def test_identity_endpoint_returns_jwt_with_audience(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/default/identity",
+            params={"audience": "https://service.example/api"},
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    jwt = resp.text
+    parts = jwt.split(".")
+    assert len(parts) == 3
+    import base64 as _b64
+    import json as _json
+
+    payload_b64 = parts[1]
+    padding = "=" * (-len(payload_b64) % 4)
+    payload = _json.loads(_b64.urlsafe_b64decode(payload_b64 + padding))
+    assert payload["aud"] == "https://service.example/api"
+
+
+async def test_identity_endpoint_without_audience_returns_400(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/default/identity",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 400
+    assert "audience" in resp.text
+
+
+async def test_identity_endpoint_with_empty_audience_returns_400(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/default/identity",
+            params={"audience": ""},
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 400
+
+
+async def test_identity_endpoint_rejects_unknown_alias_with_404(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/nobody/identity",
+            params={"audience": "a"},
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 404
