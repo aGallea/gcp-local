@@ -5,6 +5,8 @@ import pytest
 
 from gcp_local.services.metadata.app import build_app
 
+DEFAULT_EMAIL = "default@local-dev.iam.gserviceaccount.com"
+
 
 @pytest.fixture
 def client() -> httpx.AsyncClient:
@@ -79,3 +81,93 @@ async def test_numeric_project_id_honors_env(
             headers={"Metadata-Flavor": "Google"},
         )
     assert resp.text == "1234567890"
+
+
+async def test_service_accounts_listing_includes_default_and_configured_email(
+    client: httpx.AsyncClient,
+) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
+    body_lines = resp.text.strip().splitlines()
+    assert "default/" in body_lines
+    assert f"{DEFAULT_EMAIL}/" in body_lines
+
+
+async def test_email_endpoint_returns_configured_email(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/default/email",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    assert resp.text == DEFAULT_EMAIL
+
+
+async def test_email_endpoint_works_for_email_alias(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("METADATA_SERVICE_ACCOUNT_EMAIL", "bot@x.iam.gserviceaccount.com")
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/bot@x.iam.gserviceaccount.com/email",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    assert resp.text == "bot@x.iam.gserviceaccount.com"
+
+
+async def test_email_endpoint_rejects_unknown_alias_with_404(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/nobody/email",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 404
+
+
+async def test_scopes_endpoint_default_returns_cloud_platform(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/default/scopes",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    assert resp.text.strip() == "https://www.googleapis.com/auth/cloud-platform"
+
+
+async def test_scopes_endpoint_honors_env(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "METADATA_SCOPES",
+        "https://www.googleapis.com/auth/devstorage.read_only,https://www.googleapis.com/auth/cloud-platform",
+    )
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/default/scopes",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.text.splitlines() == [
+        "https://www.googleapis.com/auth/devstorage.read_only",
+        "https://www.googleapis.com/auth/cloud-platform",
+    ]
+
+
+async def test_recursive_view_returns_email_aliases_and_scopes(
+    client: httpx.AsyncClient,
+) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/instance/service-accounts/default/?recursive=true",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["email"] == DEFAULT_EMAIL
+    assert "default" in body["aliases"]
+    assert body["scopes"] == ["https://www.googleapis.com/auth/cloud-platform"]
