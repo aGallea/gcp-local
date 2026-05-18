@@ -19,11 +19,3 @@ def build_access_token() -> dict[str, str | int]:
         "expires_in": _TOKEN_LIFETIME_SECONDS,
         "token_type": "Bearer",
     }
-
-
-def build_id_token() -> str:
-    """Return the ID token JWT (stub implementation).
-
-    Full implementation in Task 3.
-    """
-    raise NotImplementedError("build_id_token is implemented in Task 3")

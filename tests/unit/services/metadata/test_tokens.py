@@ -1,9 +1,6 @@
 """Tests for the stub token builders."""
 
-from gcp_local.services.metadata.tokens import (  # noqa: F401
-    build_access_token,
-    build_id_token,
-)
+from gcp_local.services.metadata.tokens import build_access_token
 
 
 def test_build_access_token_returns_documented_shape() -> None:
