@@ -8,6 +8,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from gcp_local.services.metadata.tokens import build_access_token
+
 _METADATA_FLAVOR_HEADER = "Metadata-Flavor"
 _METADATA_FLAVOR_VALUE = "Google"
 
@@ -120,5 +122,11 @@ def build_app() -> FastAPI:
         if _resolve_alias(alias) is None:
             return PlainTextResponse("alias not found", status_code=404)
         return PlainTextResponse("\n".join(_scopes()) + "\n")
+
+    @app.get("/computeMetadata/v1/instance/service-accounts/{alias}/token")
+    async def _sa_token(alias: str, scopes: str | None = None) -> Response:
+        if _resolve_alias(alias) is None:
+            return PlainTextResponse("alias not found", status_code=404)
+        return _json_response(build_access_token())  # type: ignore[arg-type]
 
     return app
