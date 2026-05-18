@@ -13,6 +13,7 @@ import uvicorn
 
 from gcp_local.core.context import Context
 from gcp_local.core.service import HealthStatus, Port
+from gcp_local.services.metadata.app import build_app
 
 log = logging.getLogger(__name__)
 
@@ -31,10 +32,34 @@ class MetadataService:
         self._started = False
 
     async def start(self, ctx: Context) -> None:
-        raise NotImplementedError
+        port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
+        app = build_app()
+        self._server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host="0.0.0.0",
+                port=port,
+                log_level="info",
+                access_log=False,
+            )
+        )
+        self._server_task = asyncio.create_task(self._server.serve(), name=f"{self.name}-server")
+        self._started = True
+        log.info(
+            "metadata service listening on :%d (clients: set GCE_METADATA_HOST=<host>:%d)",
+            port,
+            port,
+        )
 
     async def stop(self) -> None:
-        raise NotImplementedError
+        if self._server is not None:
+            self._server.should_exit = True
+        if self._server_task is not None:
+            try:
+                await asyncio.wait_for(self._server_task, timeout=5.0)
+            except (TimeoutError, asyncio.CancelledError):
+                self._server_task.cancel()
+        self._started = False
 
     async def reset_state(self) -> None:
         pass
