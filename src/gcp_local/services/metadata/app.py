@@ -1,5 +1,6 @@
 """FastAPI app for the fake GCE metadata server."""
 
+import os
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request
@@ -8,6 +9,17 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 _METADATA_FLAVOR_HEADER = "Metadata-Flavor"
 _METADATA_FLAVOR_VALUE = "Google"
+
+_DEFAULT_PROJECT_ID = "local-dev"
+_DEFAULT_NUMERIC_PROJECT_ID = "0"
+
+
+def _project_id() -> str:
+    return os.environ.get("GOOGLE_CLOUD_PROJECT") or _DEFAULT_PROJECT_ID
+
+
+def _numeric_project_id() -> str:
+    return os.environ.get("METADATA_NUMERIC_PROJECT_ID") or _DEFAULT_NUMERIC_PROJECT_ID
 
 
 class MetadataFlavorMiddleware(BaseHTTPMiddleware):
@@ -39,5 +51,13 @@ def build_app() -> FastAPI:
     @app.get("/", response_class=PlainTextResponse)
     async def _probe() -> str:
         return "computeMetadata/\n"
+
+    @app.get("/computeMetadata/v1/project/project-id", response_class=PlainTextResponse)
+    async def _project_id_route() -> str:
+        return _project_id()
+
+    @app.get("/computeMetadata/v1/project/numeric-project-id", response_class=PlainTextResponse)
+    async def _numeric_project_id_route() -> str:
+        return _numeric_project_id()
 
     return app

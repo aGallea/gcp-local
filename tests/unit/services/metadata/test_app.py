@@ -35,3 +35,47 @@ async def test_403_response_also_includes_metadata_flavor_header(
     async with client:
         resp = await client.get("/")
     assert resp.headers["Metadata-Flavor"] == "Google"
+
+
+async def test_project_id_default_is_local_dev(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/project/project-id",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
+    assert resp.text == "local-dev"
+
+
+async def test_project_id_honors_GOOGLE_CLOUD_PROJECT_env(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "my-proj")
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/project/project-id",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.text == "my-proj"
+
+
+async def test_numeric_project_id_default_is_zero(client: httpx.AsyncClient) -> None:
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/project/numeric-project-id",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.text == "0"
+
+
+async def test_numeric_project_id_honors_env(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("METADATA_NUMERIC_PROJECT_ID", "1234567890")
+    async with client:
+        resp = await client.get(
+            "/computeMetadata/v1/project/numeric-project-id",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.text == "1234567890"
