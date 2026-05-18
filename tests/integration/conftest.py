@@ -23,6 +23,7 @@ from gcp_local.core.registry import ServiceRegistry
 from gcp_local.services.bigquery import BigQueryService
 from gcp_local.services.firestore import FirestoreService
 from gcp_local.services.gcs import GcsService
+from gcp_local.services.metadata import MetadataService
 from gcp_local.services.pubsub import PubSubService
 from gcp_local.services.secret_manager import SecretManagerService
 
@@ -55,6 +56,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
     registry.register("bigquery", BigQueryService)
     registry.register("pubsub", PubSubService)
     registry.register("firestore", FirestoreService)
+    registry.register("metadata", MetadataService)
 
     admin_port = _free_port()
     gcs_port = _free_port()
@@ -62,8 +64,9 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
     bigquery_port = _free_port()
     pubsub_port = _free_port()
     firestore_port = _free_port()
+    metadata_port = _free_port()
     settings = Settings(
-        services=["gcs", "secret_manager", "bigquery", "pubsub", "firestore"],
+        services=["gcs", "secret_manager", "bigquery", "pubsub", "firestore", "metadata"],
         persist=False,
         data_dir=tmp_path,
         admin_port=admin_port,
@@ -73,6 +76,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
             "bigquery": bigquery_port,
             "pubsub": pubsub_port,
             "firestore": firestore_port,
+            "metadata": metadata_port,
         },
     )
     task = asyncio.create_task(run(registry, settings), name="emulator")
@@ -83,6 +87,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
         await _wait_for_port(bigquery_port)
         await _wait_for_port(pubsub_port)
         await _wait_for_port(firestore_port)
+        await _wait_for_port(metadata_port)
         yield {
             "admin_port": admin_port,
             "gcs_port": gcs_port,
@@ -90,6 +95,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
             "bigquery_port": bigquery_port,
             "pubsub_port": pubsub_port,
             "firestore_port": firestore_port,
+            "metadata_port": metadata_port,
         }
     finally:
         task.cancel()
@@ -107,4 +113,5 @@ async def emulator_endpoints(emulator: dict[str, int]) -> dict[str, str]:
         "bigquery": f"127.0.0.1:{emulator['bigquery_port']}",
         "pubsub": f"127.0.0.1:{emulator['pubsub_port']}",
         "firestore": f"127.0.0.1:{emulator['firestore_port']}",
+        "metadata": f"127.0.0.1:{emulator['metadata_port']}",
     }
