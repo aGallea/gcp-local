@@ -79,3 +79,26 @@ async def test_id_token_audience_round_trip(emulator: dict[str, int]) -> None:
     payload = json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
     assert payload["aud"] == "https://service.example/api"
     assert payload["email"].endswith("local-dev.iam.gserviceaccount.com")
+
+
+@pytest.mark.asyncio
+async def test_bigquery_client_works_with_plain_adc(emulator: dict[str, int]) -> None:
+    """Production-shaped client code (no AnonymousCredentials, no client_options)
+    must complete a query against gcp-local. The metadata server keeps ADC
+    happy; BIGQUERY_EMULATOR_HOST routes traffic to the BigQuery emulator.
+    """
+    import os
+
+    from google.cloud import bigquery
+
+    os.environ["BIGQUERY_EMULATOR_HOST"] = f"http://127.0.0.1:{emulator['bigquery_port']}"
+    try:
+
+        def _query() -> list:
+            client = bigquery.Client(project="local-dev")
+            return list(client.query("SELECT 1 AS x").result())
+
+        rows = await asyncio.get_running_loop().run_in_executor(None, _query)
+        assert [r["x"] for r in rows] == [1]
+    finally:
+        os.environ.pop("BIGQUERY_EMULATOR_HOST", None)
