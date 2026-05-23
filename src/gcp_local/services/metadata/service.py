@@ -32,20 +32,18 @@ class MetadataService:
         self._started = False
 
     async def start(self, ctx: Context) -> None:
+        port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         app = build_app()
-        sock = ctx.sockets.get(self.name)
-        if sock:
-            port = sock.getsockname()[1]
-            cfg = uvicorn.Config(app, log_level="info", access_log=False)
-            serve_sockets = [sock]
-        else:
-            port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
-            cfg = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info", access_log=False)
-            serve_sockets = None
-        self._server = uvicorn.Server(cfg)
-        self._server_task = asyncio.create_task(
-            self._server.serve(sockets=serve_sockets), name=f"{self.name}-server"
+        self._server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host="0.0.0.0",
+                port=port,
+                log_level="info",
+                access_log=False,
+            )
         )
+        self._server_task = asyncio.create_task(self._server.serve(), name=f"{self.name}-server")
         self._started = True
         log.info(
             "metadata service listening on :%d (clients: set GCE_METADATA_HOST=<host>:%d)",

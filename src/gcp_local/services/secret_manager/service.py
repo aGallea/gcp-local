@@ -33,12 +33,7 @@ class SecretManagerService:
 
     async def start(self, ctx: Context) -> None:
         self._storage = self._make_storage(ctx)
-        sock = ctx.sockets.get(self.name)
-        if sock:
-            port = sock.getsockname()[1]
-            sock.close()  # Release before gRPC binds (minimises the TOCTOU window)
-        else:
-            port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
+        port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._server = grpc.aio.server()
         self._server.add_insecure_port(f"[::]:{port}")
         servicer = SecretManagerServicer(storage=self._storage)
