@@ -1,3 +1,5 @@
+import asyncio
+import socket
 from pathlib import Path
 
 import pytest
@@ -68,3 +70,56 @@ def test_storage_property_raises_before_start():
 
     with pytest.raises(RuntimeError, match="not started"):
         _ = svc.storage
+
+
+async def test_start_uses_pre_bound_socket_port(tmp_path: Path) -> None:
+    """When ctx.sockets["gcs"] is provided the service binds to that socket's port."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", 0))
+    port = s.getsockname()[1]
+
+    svc = GcsService()
+    ctx = Context(persist=False, data_dir=tmp_path, sockets={"gcs": s})
+    await svc.start(ctx)
+    try:
+        deadline = asyncio.get_event_loop().time() + 5.0
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                _, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.close()
+                await writer.wait_closed()
+                break
+            except OSError:
+                await asyncio.sleep(0.05)
+        else:
+            pytest.fail(f"GCS service did not come up on pre-bound port {port}")
+    finally:
+        await svc.stop()
+
+
+async def test_start_without_socket_falls_back_to_port_override(tmp_path: Path) -> None:
+    """Without ctx.sockets the service uses port_overrides as before."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", 0))
+    port = s.getsockname()[1]
+    s.close()
+
+    svc = GcsService()
+    ctx = Context(persist=False, data_dir=tmp_path, port_overrides={"gcs": port})
+    await svc.start(ctx)
+    try:
+        deadline = asyncio.get_event_loop().time() + 5.0
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                _, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.close()
+                await writer.wait_closed()
+                break
+            except OSError:
+                await asyncio.sleep(0.05)
+        else:
+            pytest.fail(f"GCS service did not come up on port {port}")
+    finally:
+        await svc.stop()

@@ -28,10 +28,19 @@ from gcp_local.services.pubsub import PubSubService
 from gcp_local.services.secret_manager import SecretManagerService
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def _bound_socket() -> socket.socket:
+    """Return a TCP socket bound to 0.0.0.0:0, kept open to hold the port.
+
+    The caller passes this socket directly to the service (uvicorn uses it via
+    serve(sockets=[s]); gRPC services close it just before binding). Holding
+    the socket open until the service is ready eliminates the TOCTOU race
+    where the OS could hand the port to another process in the gap between
+    _free_port() releasing it and the service re-binding it.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", 0))
+    return s
 
 
 async def _wait_for_port(port: int, timeout: float = 5.0) -> None:
@@ -58,13 +67,22 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
     registry.register("firestore", FirestoreService)
     registry.register("metadata", MetadataService)
 
-    admin_port = _free_port()
-    gcs_port = _free_port()
-    secret_manager_port = _free_port()
-    bigquery_port = _free_port()
-    pubsub_port = _free_port()
-    firestore_port = _free_port()
-    metadata_port = _free_port()
+    admin_sock = _bound_socket()
+    gcs_sock = _bound_socket()
+    secret_manager_sock = _bound_socket()
+    bigquery_sock = _bound_socket()
+    pubsub_sock = _bound_socket()
+    firestore_sock = _bound_socket()
+    metadata_sock = _bound_socket()
+
+    admin_port = admin_sock.getsockname()[1]
+    gcs_port = gcs_sock.getsockname()[1]
+    secret_manager_port = secret_manager_sock.getsockname()[1]
+    bigquery_port = bigquery_sock.getsockname()[1]
+    pubsub_port = pubsub_sock.getsockname()[1]
+    firestore_port = firestore_sock.getsockname()[1]
+    metadata_port = metadata_sock.getsockname()[1]
+
     settings = Settings(
         services=["gcs", "secret_manager", "bigquery", "pubsub", "firestore", "metadata"],
         persist=False,
@@ -79,7 +97,16 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
             "metadata": metadata_port,
         },
     )
-    task = asyncio.create_task(run(registry, settings), name="emulator")
+    sockets = {
+        "admin": admin_sock,
+        "gcs": gcs_sock,
+        "secret_manager": secret_manager_sock,
+        "bigquery": bigquery_sock,
+        "pubsub": pubsub_sock,
+        "firestore": firestore_sock,
+        "metadata": metadata_sock,
+    }
+    task = asyncio.create_task(run(registry, settings, sockets=sockets), name="emulator")
     try:
         await _wait_for_port(admin_port)
         await _wait_for_port(gcs_port)

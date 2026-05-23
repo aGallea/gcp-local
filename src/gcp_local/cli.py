@@ -3,6 +3,7 @@ import contextlib
 import logging
 import os
 import signal
+import socket
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -56,7 +57,11 @@ def build_settings(
     )
 
 
-async def run(registry: ServiceRegistry, settings: Settings) -> int:
+async def run(
+    registry: ServiceRegistry,
+    settings: Settings,
+    sockets: dict[str, socket.socket] | None = None,
+) -> int:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     hub = StateHub()
     ctx = Context(
@@ -64,6 +69,7 @@ async def run(registry: ServiceRegistry, settings: Settings) -> int:
         data_dir=settings.data_dir,
         port_overrides=settings.port_overrides,
         state_hub=hub,
+        sockets=sockets or {},
     )
     services = [registry.get(n)() for n in settings.services]
     lc = Lifecycle(services, ctx)
@@ -72,15 +78,20 @@ async def run(registry: ServiceRegistry, settings: Settings) -> int:
     await lc.start_all()
 
     admin = build_admin_app(lc)
-    admin_server = uvicorn.Server(
-        uvicorn.Config(
+    admin_sock = (sockets or {}).get("admin")
+    if admin_sock:
+        admin_cfg = uvicorn.Config(admin, log_level="info", access_log=False)
+        admin_serve_sockets: list[socket.socket] | None = [admin_sock]
+    else:
+        admin_cfg = uvicorn.Config(
             admin,
             host="0.0.0.0",
             port=settings.admin_port,
             log_level="info",
             access_log=False,
         )
-    )
+        admin_serve_sockets = None
+    admin_server = uvicorn.Server(admin_cfg)
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -88,7 +99,7 @@ async def run(registry: ServiceRegistry, settings: Settings) -> int:
         with contextlib.suppress(NotImplementedError):  # Windows CI
             loop.add_signal_handler(sig, stop_event.set)
 
-    admin_task = asyncio.create_task(admin_server.serve(), name="admin")
+    admin_task = asyncio.create_task(admin_server.serve(sockets=admin_serve_sockets), name="admin")
     stop_task = asyncio.create_task(stop_event.wait(), name="stop")
     try:
         await asyncio.wait({admin_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)

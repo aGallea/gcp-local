@@ -54,23 +54,27 @@ class BigQueryService:
             gcs_fetcher=GcsUriFetcher(endpoint=gcs_endpoint),
         )
         self._resumables = ResumableSessionStore()
-        port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._app = build_app(
             storage=self._storage,
             runner=self._runner,
             load_runner=self._load_runner,
             resumables=self._resumables,
         )
-        self._server = uvicorn.Server(
-            uvicorn.Config(
-                self._app,
-                host="0.0.0.0",
-                port=port,
-                log_level="info",
-                access_log=False,
+        sock = ctx.sockets.get(self.name)
+        if sock:
+            port = sock.getsockname()[1]
+            cfg = uvicorn.Config(self._app, log_level="info", access_log=False)
+            serve_sockets = [sock]
+        else:
+            port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
+            cfg = uvicorn.Config(
+                self._app, host="0.0.0.0", port=port, log_level="info", access_log=False
             )
+            serve_sockets = None
+        self._server = uvicorn.Server(cfg)
+        self._server_task = asyncio.create_task(
+            self._server.serve(sockets=serve_sockets), name=f"{self.name}-server"
         )
-        self._server_task = asyncio.create_task(self._server.serve(), name=f"{self.name}-server")
         self._sweeper_task = asyncio.create_task(self._sweeper_loop(), name=f"{self.name}-sweeper")
         self._started = True
         log.info("bigquery service listening on :%d", port)

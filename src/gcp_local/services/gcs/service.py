@@ -37,18 +37,22 @@ class GcsService:
         self._storage = self._make_storage(ctx)
         if isinstance(self._storage, DiskStorage):
             await self._storage.gc_stale_sessions(max_age_seconds=7 * 86400)
-        port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._app = self._build_app()
-        self._server = uvicorn.Server(
-            uvicorn.Config(
-                self._app,
-                host="0.0.0.0",
-                port=port,
-                log_level="info",
-                access_log=False,
+        sock = ctx.sockets.get(self.name)
+        if sock:
+            port = sock.getsockname()[1]
+            cfg = uvicorn.Config(self._app, log_level="info", access_log=False)
+            serve_sockets = [sock]
+        else:
+            port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
+            cfg = uvicorn.Config(
+                self._app, host="0.0.0.0", port=port, log_level="info", access_log=False
             )
+            serve_sockets = None
+        self._server = uvicorn.Server(cfg)
+        self._server_task = asyncio.create_task(
+            self._server.serve(sockets=serve_sockets), name=f"{self.name}-server"
         )
-        self._server_task = asyncio.create_task(self._server.serve(), name=f"{self.name}-server")
         self._started = True
         log.info("gcs service listening on :%d", port)
 
