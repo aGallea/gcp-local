@@ -4,6 +4,15 @@ All notable changes to `gcp-local` are documented here. The format follows [Keep
 
 Releases are managed by [release-please](https://github.com/googleapis/release-please) — it scans Conventional Commits on `master` and opens a Release PR that bumps `pyproject.toml`, promotes `[Unreleased]` to a versioned section, and tags `vX.Y.Z` on merge. You don't need to edit this file by hand for normal commits; release-please derives entries from commit subjects.
 
+## [0.6.1](https://github.com/aGallea/gcp-local/compare/v0.6.0...v0.6.1) (2026-05-23)
+
+
+### Fixed
+
+* **test:** eliminate TOCTOU port-collision flake in integration fixture ([d92f32d](https://github.com/aGallea/gcp-local/commit/d92f32dbe552d8505b9986492274e0ddf5ad499d))
+* **test:** eliminate TOCTOU port-collision flake in integration fixture ([caf5764](https://github.com/aGallea/gcp-local/commit/caf5764b4661736a391eb79076bffce20f7016d7)), closes [#26](https://github.com/aGallea/gcp-local/issues/26)
+* **test:** fix _free_port() interface mismatch — bind on 0.0.0.0 ([56bda17](https://github.com/aGallea/gcp-local/commit/56bda17e94d93f50990ea37723f397a137ba1c06)), closes [#26](https://github.com/aGallea/gcp-local/issues/26)
+
 ## [0.6.0](https://github.com/aGallea/gcp-local/compare/v0.5.1...v0.6.0) (2026-05-18)
 
 
