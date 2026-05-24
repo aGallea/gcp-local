@@ -20,7 +20,9 @@ Alpha. Stable enough for local development and CI; not a security boundary.
 - `GET /computeMetadata/v1/instance/service-accounts/` — lists `default` and the configured email.
 - `GET /computeMetadata/v1/instance/service-accounts/{default|<email>}/email` — returns `$METADATA_SERVICE_ACCOUNT_EMAIL` (default `default@local-dev.iam.gserviceaccount.com`).
 - `GET /computeMetadata/v1/instance/service-accounts/{alias}/scopes` — returns `$METADATA_SCOPES` (default `https://www.googleapis.com/auth/cloud-platform`).
-- `GET /computeMetadata/v1/instance/service-accounts/{alias}/token` — returns a stub access token (`ya29.gcp-local-stub-token`, `expires_in: 3600`).
+- `GET /computeMetadata/v1/instance/service-accounts/{alias}/token` — returns a stub access token whose value encodes the requested SA email: `ya29.gcp-local-<base64url(email)>`, `expires_in: 3600`. The Secret Manager emulator can decode this token to enforce IAM policies.
+
+**Open alias resolution.** Any string containing `@` is accepted as a valid SA alias without pre-registration. A request for `alice@example.iam.gserviceaccount.com/token` returns a token encoding `alice@example.iam.gserviceaccount.com`. This makes it straightforward to test IAM enforcement with multiple identities in the same local environment.
 - `GET /computeMetadata/v1/instance/service-accounts/{alias}/identity?audience=...` — returns a real-format JWT bound to the requested audience. Signature is a fixed placeholder; payload carries `aud`, `email`, `azp`, `sub`, `iss`, `iat`, `exp`.
 - `GET /computeMetadata/v1/instance/service-accounts/{alias}/?recursive=true` — recursive JSON view.
 
@@ -28,8 +30,7 @@ Every request must include header `Metadata-Flavor: Google` (otherwise 403). Eve
 
 ## What's not emulated
 
-- **Token signatures.** Access tokens are fixed strings. ID-token JWTs have a placeholder signature that won't verify against Google's JWKS. The emulator services ignore tokens; real GCP services correctly reject them.
-- **Multi-SA aliases.** Only `default` and the configured email-as-alias are served. Real GCE supports arbitrary attached service accounts.
+- **Token signatures.** Access tokens are stub strings. ID-token JWTs have a placeholder signature that won't verify against Google's JWKS. The emulator services ignore tokens; real GCP services correctly reject them.
 - **`/instance/zone`, `/instance/name`, `/instance/id`, `/instance/attributes/*`, `/instance/network-interfaces/*`.** These are used by infrastructure tooling, not by `google-cloud-*` client libraries.
 - **TLS.** Plain HTTP, like every other emulator endpoint.
 - **`metadata.google.internal` DNS.** The server binds on a regular high port; pointing `metadata.google.internal` at it is your DNS / `hostAliases` / sidecar problem (see "Connecting" below).

@@ -37,9 +37,18 @@ def _scopes() -> list[str]:
 
 
 def _resolve_alias(alias: str) -> str | None:
-    """Return the canonical alias ('default') or None for an unknown alias."""
-    if alias == "default" or alias == _email():
-        return "default"
+    """Return the SA email for the alias, or None if unrecognisable.
+
+    'default' resolves to the configured default SA email.  Any string that
+    looks like an email address (contains '@') is accepted as-is — this lets
+    callers request tokens for arbitrary local SA identities without
+    pre-registering them, which is the mechanism that makes IAM enforcement
+    testable without credentials files.
+    """
+    if alias == "default":
+        return _email()
+    if "@" in alias:
+        return alias
     return None
 
 
@@ -95,12 +104,13 @@ def build_app() -> FastAPI:
 
     @app.get("/computeMetadata/v1/instance/service-accounts/{alias}/")
     async def _sa_recursive(alias: str, recursive: str | None = None) -> Response:
-        if _resolve_alias(alias) is None:
+        sa_email = _resolve_alias(alias)
+        if sa_email is None:
             return PlainTextResponse("alias not found", status_code=404)
         return _json_response(
             {
                 "aliases": ["default"],
-                "email": _email(),
+                "email": sa_email,
                 "scopes": _scopes(),
             }
         )
@@ -110,9 +120,10 @@ def build_app() -> FastAPI:
         response_class=PlainTextResponse,
     )
     async def _sa_email(alias: str) -> Response:
-        if _resolve_alias(alias) is None:
+        sa_email = _resolve_alias(alias)
+        if sa_email is None:
             return PlainTextResponse("alias not found", status_code=404)
-        return PlainTextResponse(_email())
+        return PlainTextResponse(sa_email)
 
     @app.get(
         "/computeMetadata/v1/instance/service-accounts/{alias}/scopes",
@@ -125,16 +136,18 @@ def build_app() -> FastAPI:
 
     @app.get("/computeMetadata/v1/instance/service-accounts/{alias}/token")
     async def _sa_token(alias: str, scopes: str | None = None) -> Response:
-        if _resolve_alias(alias) is None:
+        sa_email = _resolve_alias(alias)
+        if sa_email is None:
             return PlainTextResponse("alias not found", status_code=404)
-        return _json_response(build_access_token())  # type: ignore[arg-type]
+        return _json_response(build_access_token(sa_email))  # type: ignore[arg-type]
 
     @app.get(
         "/computeMetadata/v1/instance/service-accounts/{alias}/identity",
         response_class=PlainTextResponse,
     )
     async def _sa_identity(alias: str, audience: str | None = None) -> Response:
-        if _resolve_alias(alias) is None:
+        sa_email = _resolve_alias(alias)
+        if sa_email is None:
             return PlainTextResponse("alias not found", status_code=404)
         if not audience:
             return PlainTextResponse(
@@ -144,7 +157,7 @@ def build_app() -> FastAPI:
         return PlainTextResponse(
             build_id_token(
                 audience=audience,
-                email=_email(),
+                email=sa_email,
                 numeric_project_id=_numeric_project_id(),
             )
         )

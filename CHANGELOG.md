@@ -49,6 +49,8 @@ Releases are managed by [release-please](https://github.com/googleapis/release-p
 
 ### Added
 
+- **Secret Manager IAM**: `SetIamPolicy`, `GetIamPolicy`, and `TestIamPermissions` now store and return policies per secret. Optional enforcement via `SECRET_MANAGER_ENFORCE_IAM=1` — caller identity is extracted from the stub token, checked against the stored policy, and rejected with `PERMISSION_DENIED` on mismatch. Empty or absent policy allows all callers. Built-in roles `roles/secretmanager.admin`, `secretVersionManager`, `secretVersionAdder`, `secretAccessor`, and `viewer` are mapped to their permission sets. Project-level RPCs (`CreateSecret`, `ListSecrets`) bypass per-secret enforcement.
+- **Metadata server open-alias tokens**: any SA email (any string containing `@`) can now be passed as an alias without pre-registration. Access tokens encode the requested SA email as `ya29.gcp-local-<base64url(email)>`. `decode_stub_token_email` in `tokens.py` reverses this encoding; Secret Manager uses it to identify callers when `SECRET_MANAGER_ENFORCE_IAM=1` is set.
 - **BigQuery browser UI**: project / dataset / table navigation, schema view with paged row preview, and an ad-hoc SQL query console. Served at `http://localhost:4510/ui/bigquery`, backed by a new `/_emulator/ui-api/v1/bigquery/...` namespace that reads and writes the same `BigQueryStorage` and `JobRunner` instances as the wire surface on port 9050.
 - **`python -m gcp_local`**: added `src/gcp_local/__main__.py` so the package can be invoked as a module, alongside the existing `gcp-local` console script.
 - **`.python-version`**: pinned to `3.13` for `pyenv` / `uv` users; matches `requires-python` in `pyproject.toml`.

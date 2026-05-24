@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 import grpc
+from google.iam.v1 import iam_policy_pb2, policy_pb2
 from google.protobuf import empty_pb2
 from google.protobuf.timestamp_pb2 import Timestamp
 
@@ -13,6 +14,7 @@ from gcp_local.generated.google.cloud.secretmanager.v1 import (
     service_pb2_grpc,
 )
 from gcp_local.services.gcs.ids import rfc3339_now
+from gcp_local.services.metadata.tokens import decode_stub_token_email
 from gcp_local.services.secret_manager.models import (
     SecretRecord,
     SecretVersion,
@@ -35,6 +37,80 @@ from gcp_local.services.secret_manager.storage import (
 )
 
 log = logging.getLogger(__name__)
+
+# Maps built-in Secret Manager roles to the permissions they grant.
+_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
+    "roles/secretmanager.admin": frozenset(
+        {
+            "secretmanager.secrets.create",
+            "secretmanager.secrets.get",
+            "secretmanager.secrets.list",
+            "secretmanager.secrets.update",
+            "secretmanager.secrets.delete",
+            "secretmanager.secrets.setIamPolicy",
+            "secretmanager.secrets.getIamPolicy",
+            "secretmanager.versions.add",
+            "secretmanager.versions.get",
+            "secretmanager.versions.list",
+            "secretmanager.versions.access",
+            "secretmanager.versions.enable",
+            "secretmanager.versions.disable",
+            "secretmanager.versions.destroy",
+        }
+    ),
+    "roles/secretmanager.secretVersionManager": frozenset(
+        {
+            "secretmanager.secrets.get",
+            "secretmanager.secrets.list",
+            "secretmanager.versions.add",
+            "secretmanager.versions.get",
+            "secretmanager.versions.list",
+            "secretmanager.versions.enable",
+            "secretmanager.versions.disable",
+            "secretmanager.versions.destroy",
+        }
+    ),
+    "roles/secretmanager.secretVersionAdder": frozenset(
+        {
+            "secretmanager.secrets.get",
+            "secretmanager.versions.add",
+        }
+    ),
+    "roles/secretmanager.secretAccessor": frozenset(
+        {
+            "secretmanager.secrets.get",
+            "secretmanager.versions.get",
+            "secretmanager.versions.access",
+        }
+    ),
+    "roles/secretmanager.viewer": frozenset(
+        {
+            "secretmanager.secrets.get",
+            "secretmanager.secrets.list",
+            "secretmanager.versions.get",
+            "secretmanager.versions.list",
+        }
+    ),
+}
+
+
+def _caller_email(context: Any) -> str | None:
+    """Extract the SA email from the gRPC authorization metadata, or None."""
+    for key, value in context.invocation_metadata():
+        if key.lower() == "authorization" and value.startswith("Bearer "):
+            return decode_stub_token_email(value[len("Bearer ") :])
+    return None
+
+
+def _has_permission(policy: dict, email: str, permission: str) -> bool:
+    """Return True if email holds permission according to policy."""
+    candidates = {f"serviceAccount:{email}", "allAuthenticatedUsers", "allUsers"}
+    for binding in policy.get("bindings", []):
+        role = binding.get("role", "")
+        members = set(binding.get("members", []))
+        if candidates & members and permission in _ROLE_PERMISSIONS.get(role, frozenset()):
+            return True
+    return False
 
 
 def _parse_parent(parent: str) -> str:
@@ -80,9 +156,43 @@ def _version_to_proto(
     )
 
 
+def _policy_to_proto(policy: dict) -> policy_pb2.Policy:
+    bindings = [
+        policy_pb2.Binding(role=b["role"], members=b.get("members", []))
+        for b in policy.get("bindings", [])
+    ]
+    return policy_pb2.Policy(version=policy.get("version", 1), bindings=bindings)
+
+
+def _proto_to_policy(proto: policy_pb2.Policy) -> dict:
+    return {
+        "version": proto.version or 1,
+        "bindings": [{"role": b.role, "members": list(b.members)} for b in proto.bindings],
+    }
+
+
 class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
-    def __init__(self, *, storage: SecretManagerStorage) -> None:
+    def __init__(self, *, storage: SecretManagerStorage, enforce_iam: bool = False) -> None:
         self._storage = storage
+        self._enforce_iam = enforce_iam
+
+    async def _check_iam(self, context: Any, policy: dict, permission: str) -> None:
+        """Abort with PERMISSION_DENIED if caller lacks permission.
+
+        No-op when enforcement is disabled or when the secret has no policy
+        (empty policy = allow all, preserving pre-IAM behaviour).
+        """
+        if not self._enforce_iam or not policy.get("bindings"):
+            return
+        email = _caller_email(context)
+        if email is None:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "missing or unrecognized token")
+            return
+        if not _has_permission(policy, email, permission):
+            await context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                f"{email!r} does not have {permission!r} on this secret",
+            )
 
     async def CreateSecret(self, request: Any, context: Any) -> Any:
         try:
@@ -115,6 +225,7 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
             rec = await self._storage.get_secret(project, sid)
         except SecretNotFound:
             await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.name!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.secrets.get")
         return _record_to_proto(rec)
 
     async def ListSecrets(self, request: Any, context: Any) -> Any:
@@ -145,6 +256,7 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
                 grpc.StatusCode.NOT_FOUND,
                 f"secret {request.secret.name!r} not found",
             )
+        await self._check_iam(context, rec.policy, "secretmanager.secrets.update")
         mask = set(request.update_mask.paths)
         if "labels" in mask:
             rec.labels = dict(request.secret.labels)
@@ -159,9 +271,11 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
         except InvalidResourceName as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
         try:
-            await self._storage.delete_secret(project, sid)
+            rec = await self._storage.get_secret(project, sid)
         except SecretNotFound:
             await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.name!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.secrets.delete")
+        await self._storage.delete_secret(project, sid)
         return empty_pb2.Empty()
 
     # --- version lifecycle -----------------------------------------------
@@ -171,6 +285,11 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
             project, sid = parse_secret_name(request.parent)
         except InvalidResourceName as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            rec = await self._storage.get_secret(project, sid)
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.parent!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.versions.add")
         try:
             version = await self._storage.add_version(project, sid, bytes(request.payload.data))
         except SecretNotFound:
@@ -182,11 +301,12 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
             project, sid, vid_raw = parse_version_name(request.name)
         except InvalidResourceName as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            rec = await self._storage.get_secret(project, sid)
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.versions.get")
         if vid_raw == "latest":
-            try:
-                rec = await self._storage.get_secret(project, sid)
-            except SecretNotFound:
-                await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
             v = rec.highest_enabled_version()
             if v is None:
                 await context.abort(
@@ -211,14 +331,16 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
         except InvalidResourceName as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
         try:
-            items, next_token = await self._storage.list_versions(
-                project,
-                sid,
-                page_size=request.page_size or None,
-                page_token=request.page_token or None,
-            )
+            rec = await self._storage.get_secret(project, sid)
         except SecretNotFound:
             await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.versions.list")
+        items, next_token = await self._storage.list_versions(
+            project,
+            sid,
+            page_size=request.page_size or None,
+            page_token=request.page_token or None,
+        )
         return service_pb2.ListSecretVersionsResponse(
             versions=[_version_to_proto(project, sid, v) for v in items],
             next_page_token=next_token or "",
@@ -231,12 +353,14 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
         except InvalidResourceName as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
 
+        try:
+            rec = await self._storage.get_secret(project, sid)
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.versions.access")
+
         v: SecretVersion
         if vid_raw == "latest":
-            try:
-                rec = await self._storage.get_secret(project, sid)
-            except SecretNotFound:
-                await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {sid!r} not found")
             enabled = rec.highest_enabled_version()
             if enabled is None:
                 await context.abort(
@@ -272,13 +396,18 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
         )
 
     async def _set_state(
-        self, request_name: str, new_state: SecretVersionState, context: Any
+        self, request_name: str, new_state: SecretVersionState, context: Any, permission: str
     ) -> Any:
         try:
             project, sid, vid_raw = parse_version_name(request_name)
             vid = int(vid_raw)
         except (InvalidResourceName, ValueError) as e:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            rec = await self._storage.get_secret(project, sid)
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"version {request_name!r} not found")
+        await self._check_iam(context, rec.policy, permission)
         try:
             version = await self._storage.update_version_state(project, sid, vid, new_state)
         except (SecretNotFound, VersionNotFound):
@@ -288,10 +417,66 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
         return _version_to_proto(project, sid, version)
 
     async def EnableSecretVersion(self, request: Any, context: Any) -> Any:
-        return await self._set_state(request.name, SecretVersionState.ENABLED, context)
+        return await self._set_state(
+            request.name, SecretVersionState.ENABLED, context, "secretmanager.versions.enable"
+        )
 
     async def DisableSecretVersion(self, request: Any, context: Any) -> Any:
-        return await self._set_state(request.name, SecretVersionState.DISABLED, context)
+        return await self._set_state(
+            request.name, SecretVersionState.DISABLED, context, "secretmanager.versions.disable"
+        )
 
     async def DestroySecretVersion(self, request: Any, context: Any) -> Any:
-        return await self._set_state(request.name, SecretVersionState.DESTROYED, context)
+        return await self._set_state(
+            request.name, SecretVersionState.DESTROYED, context, "secretmanager.versions.destroy"
+        )
+
+    # --- IAM -------------------------------------------------------------
+
+    async def SetIamPolicy(self, request: Any, context: Any) -> Any:
+        try:
+            project, sid = parse_secret_name(request.resource)
+        except InvalidResourceName as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            rec = await self._storage.get_secret(project, sid)
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.resource!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.secrets.setIamPolicy")
+        policy = _proto_to_policy(request.policy)
+        await self._storage.set_iam_policy(project, sid, policy)
+        return _policy_to_proto(policy)
+
+    async def GetIamPolicy(self, request: Any, context: Any) -> Any:
+        try:
+            project, sid = parse_secret_name(request.resource)
+        except InvalidResourceName as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            rec = await self._storage.get_secret(project, sid)
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.resource!r} not found")
+        await self._check_iam(context, rec.policy, "secretmanager.secrets.getIamPolicy")
+        policy = await self._storage.get_iam_policy(project, sid)
+        return _policy_to_proto(policy)
+
+    async def TestIamPermissions(self, request: Any, context: Any) -> Any:
+        try:
+            project, sid = parse_secret_name(request.resource)
+        except InvalidResourceName as e:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(e))
+        try:
+            rec = await self._storage.get_secret(project, sid)
+        except SecretNotFound:
+            await context.abort(grpc.StatusCode.NOT_FOUND, f"secret {request.resource!r} not found")
+
+        if not self._enforce_iam or not rec.policy.get("bindings"):
+            # Without enforcement, reflect all requested permissions back.
+            return iam_policy_pb2.TestIamPermissionsResponse(permissions=list(request.permissions))
+
+        email = _caller_email(context)
+        if email is None:
+            return service_pb2.TestIamPermissionsResponse(permissions=[])
+
+        granted = [p for p in request.permissions if _has_permission(rec.policy, email, p)]
+        return iam_policy_pb2.TestIamPermissionsResponse(permissions=granted)

@@ -46,7 +46,9 @@ async def test_compute_engine_credentials_refresh_against_emulator(
         return creds
 
     creds = await asyncio.get_running_loop().run_in_executor(None, _refresh)
-    assert creds.token == "ya29.gcp-local-stub-token"
+    from gcp_local.services.metadata.tokens import STUB_TOKEN_PREFIX
+
+    assert creds.token.startswith(STUB_TOKEN_PREFIX)
     assert creds.service_account_email.endswith("local-dev.iam.gserviceaccount.com")
 
 

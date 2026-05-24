@@ -22,8 +22,8 @@ Internals for the fake GCE metadata server. For user-facing usage, see [`docs/se
 |---|---|
 | `__init__.py` | Re-exports `MetadataService`. |
 | `service.py` | `MetadataService` — `start`/`stop`/`health`/`reset_state`. Owns the uvicorn server task. |
-| `app.py` | `build_app()` factory. Defines `MetadataFlavorMiddleware` and every route. Reads configuration from `os.environ` at request time. |
-| `tokens.py` | `build_access_token()` returns a `dict`. `build_id_token(*, audience, email, numeric_project_id)` returns a JWT string with a stub signature. Both are pure functions. |
+| `app.py` | `build_app()` factory. Defines `MetadataFlavorMiddleware`, `_resolve_alias`, and every route. Reads configuration from `os.environ` at request time. |
+| `tokens.py` | `build_access_token(email)` encodes the SA email into the token and returns a `dict`. `build_id_token(*, audience, email, numeric_project_id)` returns a JWT string with a stub signature. `decode_stub_token_email(token)` reverses the encoding. All are pure functions. |
 
 ## Request lifecycle
 
@@ -51,13 +51,24 @@ MetadataFlavorMiddleware
    MetadataFlavorMiddleware stamps Metadata-Flavor: Google on the response
 ```
 
+## Alias resolution
+
+`_resolve_alias` in `app.py` handles the `{alias}` path segment:
+
+1. If `alias == "default"`, return `$METADATA_SERVICE_ACCOUNT_EMAIL`.
+2. If `alias == $METADATA_SERVICE_ACCOUNT_EMAIL`, return it directly.
+3. If `alias` contains `@`, treat it as an email and return it directly (**open alias resolution** — no pre-registration required).
+4. Otherwise return `None` → 404.
+
+This means any SA email can be passed as an alias and will receive a token encoding that email, enabling multi-identity IAM testing without emulator configuration changes.
+
 ## Error mapping
 
 | Condition | HTTP status | Body |
 |---|---|---|
 | Missing `Metadata-Flavor: Google` request header | `403` | `Missing required Metadata-Flavor header.` |
 | `/identity` with no `?audience=` or empty audience | `400` | `non-empty audience parameter required` |
-| Unknown `{alias}` (not `default` or `$METADATA_SERVICE_ACCOUNT_EMAIL`) | `404` | `alias not found` |
+| Unknown `{alias}` (no `@`, not `default`, not configured email) | `404` | `alias not found` |
 | Any other path under `/computeMetadata/v1/` | `404` | (FastAPI default) |
 
 ## Configuration source
@@ -70,13 +81,16 @@ All variables are read from `os.environ` per request (except `METADATA_EMULATOR_
 
 ```json
 {
-  "access_token": "ya29.gcp-local-stub-token",
+  "access_token": "ya29.gcp-local-<base64url(email)>",
   "expires_in":   3600,
   "token_type":   "Bearer"
 }
 ```
 
-The `ya29.` prefix matches Google's real access-token format so the value is recognizable in logs. The string is fixed; nothing downstream validates it on the emulator path.
+The `ya29.` prefix matches Google's real access-token format. The suffix encodes the SA email
+via URL-safe base64 (no padding). `build_access_token(email)` in `tokens.py` constructs this;
+`decode_stub_token_email(token)` reverses it. Emulator services (e.g. Secret Manager with
+`SECRET_MANAGER_ENFORCE_IAM=1`) use this to identify the caller without a real auth service.
 
 ### ID token (JWT)
 
@@ -113,6 +127,5 @@ Libraries that decode the JWT to inspect `aud` (IAP / OIDC client code) get the 
 ## Internals-level limitations
 
 - **No signed tokens.** Stub strings. Adding RSA signing would let downstream code verify the JWT, but no consumer requests this today.
-- **Single SA.** Only `default` and the configured email alias are served; arbitrary attached SAs are deferred.
 - **No request retries / rate limits.** This is local-only software.
 - **Port read once at startup.** Other config is request-time-read; port is bound once.

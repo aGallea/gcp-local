@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import ClassVar
 
@@ -36,7 +37,10 @@ class SecretManagerService:
         port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
         self._server = grpc.aio.server()
         self._server.add_insecure_port(f"[::]:{port}")
-        servicer = SecretManagerServicer(storage=self._storage)
+        enforce_iam = os.environ.get("SECRET_MANAGER_ENFORCE_IAM", "").lower() in ("1", "true")
+        if enforce_iam:
+            log.info("secret_manager IAM enforcement enabled")
+        servicer = SecretManagerServicer(storage=self._storage, enforce_iam=enforce_iam)
         service_pb2_grpc.add_SecretManagerServiceServicer_to_server(servicer, self._server)  # type: ignore[no-untyped-call]
         await self._server.start()
         self._started = True
