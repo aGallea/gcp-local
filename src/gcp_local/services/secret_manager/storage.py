@@ -64,6 +64,11 @@ class SecretManagerStorage(Protocol):
         new_state: SecretVersionState,
     ) -> SecretVersion: ...
 
+    async def get_iam_policy(self, project: str, secret_id: str) -> dict[str, Any]: ...
+    async def set_iam_policy(
+        self, project: str, secret_id: str, policy: dict[str, Any]
+    ) -> None: ...
+
     async def reset(self) -> None: ...
 
 
@@ -196,6 +201,14 @@ class InMemoryStorage:
                 v.destroy_time = rfc3339_now()
             return v
 
+    async def get_iam_policy(self, project: str, secret_id: str) -> dict[str, Any]:
+        rec = await self.get_secret(project, secret_id)
+        return dict(rec.policy)
+
+    async def set_iam_policy(self, project: str, secret_id: str, policy: dict[str, Any]) -> None:
+        rec = await self.get_secret(project, secret_id)
+        rec.policy = policy
+
     async def reset(self) -> None:
         self._secrets.clear()
 
@@ -207,6 +220,7 @@ def _serialize_record(r: SecretRecord) -> dict[str, Any]:
         "labels": dict(r.labels),
         "annotations": dict(r.annotations),
         "create_time": r.create_time,
+        "policy": r.policy,
         "versions": [
             {
                 "id": v.id,
@@ -240,6 +254,7 @@ def _deserialize_record(body: dict[str, Any]) -> SecretRecord:
         annotations=dict(body.get("annotations", {})),
         create_time=body["create_time"],
         versions=versions,
+        policy=dict(body.get("policy", {})),
     )
 
 
@@ -379,6 +394,19 @@ class DiskStorage:
                 v.destroy_time = rfc3339_now()
             self._save(state)
             return v
+
+    async def get_iam_policy(self, project: str, secret_id: str) -> dict[str, Any]:
+        rec = await self.get_secret(project, secret_id)
+        return dict(rec.policy)
+
+    async def set_iam_policy(self, project: str, secret_id: str, policy: dict[str, Any]) -> None:
+        async with self._lock:
+            state = self._load()
+            key = (project, secret_id)
+            if key not in state:
+                raise SecretNotFound(secret_id)
+            state[key].policy = policy
+            self._save(state)
 
     async def reset(self) -> None:
         async with self._lock:

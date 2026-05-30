@@ -55,7 +55,6 @@ See the "What's not emulated" section of [`docs/services/gcs.md`](docs/services/
 
 ### Secret Manager
 
-- **IAM** (`SetIamPolicy` / `GetIamPolicy` / `TestIamPermissions`) — currently return `UNIMPLEMENTED`. A future increment can add accept-and-store semantics.
 - **Replication policy enforcement** — `automatic` and `user_managed` accepted, not enforced.
 - **CMEK** — accepted, not enforced.
 - **Rotation schedules** — not implemented.

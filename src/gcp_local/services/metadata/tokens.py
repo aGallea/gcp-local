@@ -12,21 +12,12 @@ import time
 from collections.abc import Mapping
 from typing import Final
 
-_ACCESS_TOKEN_VALUE: Final = "ya29.gcp-local-stub-token"
+STUB_TOKEN_PREFIX: Final = "ya29.gcp-local-"
 _TOKEN_LIFETIME_SECONDS: Final = 3600
 
 _JWT_HEADER: Final[dict[str, str]] = {"alg": "RS256", "kid": "gcp-local-stub", "typ": "JWT"}
 _JWT_ISSUER: Final = "https://accounts.google.com"
 _JWT_STUB_SIGNATURE: Final = b"gcp-local-stub-signature"
-
-
-def build_access_token() -> dict[str, str | int]:
-    """Return the JSON body for `/instance/service-accounts/{alias}/token`."""
-    return {
-        "access_token": _ACCESS_TOKEN_VALUE,
-        "expires_in": _TOKEN_LIFETIME_SECONDS,
-        "token_type": "Bearer",
-    }
 
 
 def _b64url(data: bytes) -> str:
@@ -35,6 +26,31 @@ def _b64url(data: bytes) -> str:
 
 def _b64url_json(obj: Mapping[str, object]) -> str:
     return _b64url(json.dumps(obj, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+
+
+def build_access_token(email: str) -> dict[str, str | int]:
+    """Return the JSON body for `/instance/service-accounts/{alias}/token`.
+
+    The token encodes the caller's service-account email so emulator services
+    can recover the identity without a real token-validation round-trip.
+    """
+    return {
+        "access_token": STUB_TOKEN_PREFIX + _b64url(email.encode()),
+        "expires_in": _TOKEN_LIFETIME_SECONDS,
+        "token_type": "Bearer",
+    }
+
+
+def decode_stub_token_email(token: str) -> str | None:
+    """Extract the service-account email from a stub access token, or None."""
+    if not token.startswith(STUB_TOKEN_PREFIX):
+        return None
+    encoded = token[len(STUB_TOKEN_PREFIX) :]
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        return base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+    except Exception:
+        return None
 
 
 def build_id_token(*, audience: str, email: str, numeric_project_id: str) -> str:

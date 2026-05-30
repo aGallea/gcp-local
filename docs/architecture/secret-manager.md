@@ -12,8 +12,9 @@ lifecycle defined by the Google Cloud Secret Manager v1 API. It implements:
 
 Storage is either all-in-memory (the default) or write-through JSON on disk when the container
 is started with `PERSIST=1`. Payload checksums (`data_crc32c`) are computed on `AddSecretVersion`
-using `google-crc32c` and returned on `AccessSecretVersion` for client-side verification. IAM,
-CMEK, rotation schedules, and replication-routing configuration are out of scope for v1. For a
+using `google-crc32c` and returned on `AccessSecretVersion` for client-side verification. IAM
+policies are stored per-secret and optionally enforced via `SECRET_MANAGER_ENFORCE_IAM=1`. CMEK,
+rotation schedules, and replication-routing configuration are out of scope for v1. For a
 usage-oriented guide (client connection recipe, environment variables), see
 [docs/services/secret-manager.md](../services/secret-manager.md).
 
@@ -119,10 +120,11 @@ entirely (rather than emptied) so disk usage is reclaimed.
 
 ### Common interface
 
-Both backends expose the same twelve async methods: `create_secret`, `get_secret`,
+Both backends expose the same async methods: `create_secret`, `get_secret`,
 `list_secrets`, `update_secret`, `delete_secret`, `add_version`, `get_version`,
-`list_versions`, `update_version_state`, and `reset`. Pagination is handled by the shared
-`_paginate` helper, which caps page size at 250 and uses base64-encoded cursor tokens.
+`list_versions`, `update_version_state`, `get_iam_policy`, `set_iam_policy`, and `reset`.
+Pagination is handled by the shared `_paginate` helper, which caps page size at 250 and uses
+base64-encoded cursor tokens.
 
 ---
 
@@ -214,23 +216,40 @@ the version name, calls `storage.update_version_state`, and converts exceptions 
 
 ---
 
-## IAM policy stubs
+## IAM policy implementation
 
-`SetIamPolicy`, `GetIamPolicy`, and `TestIamPermissions` are **not implemented** in the
-emulator.
+`SetIamPolicy`, `GetIamPolicy`, and `TestIamPermissions` are implemented in `SecretManagerServicer`.
 
-`SecretManagerServicer` does not override these methods. Calls fall through to the generated
-base class `SecretManagerServiceServicer` in `service_pb2_grpc.py`, whose default
-implementation does:
+### Storage
 
-```python
-context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-context.set_details('Method not implemented!')
-raise NotImplementedError('Method not implemented!')
-```
+IAM policies are stored as a `policy: dict` field on `SecretRecord`. Both `InMemoryStorage` and
+`DiskStorage` persist policies alongside secret metadata. `get_iam_policy` / `set_iam_policy`
+are the two new methods on the `SecretManagerStorage` protocol.
 
-There is **no round-tripping, no storage, and no enforcement** of any IAM policy. Callers that
-issue these RPCs will receive a gRPC `UNIMPLEMENTED` error.
+### Enforcement flow
+
+When `SECRET_MANAGER_ENFORCE_IAM=1`:
+
+1. The servicer extracts caller identity from the `Authorization` header:
+   `Bearer ya29.gcp-local-<base64url(email)>` → `email` via `decode_stub_token_email` (from the
+   metadata service's `tokens.py`).
+2. The stored policy on the target `SecretRecord` is loaded.
+3. If the policy is empty or absent, the call is allowed (open default).
+4. Otherwise, the caller's email is matched against `bindings[].members` (`user:<email>`,
+   `serviceAccount:<email>`) and the required permission is checked against the role's permission set.
+5. A mismatch aborts with `PERMISSION_DENIED`.
+
+Project-level RPCs (`CreateSecret`, `ListSecrets`) skip this check entirely.
+
+### Role → permission mapping
+
+| Role | Permissions |
+|---|---|
+| `roles/secretmanager.admin` | all |
+| `roles/secretmanager.secretVersionManager` | `addVersion`, `enableVersion`, `disableVersion`, `destroyVersion`, `getVersion`, `listVersions` |
+| `roles/secretmanager.secretVersionAdder` | `addVersion` |
+| `roles/secretmanager.secretAccessor` | `accessSecretVersion` |
+| `roles/secretmanager.viewer` | `get`, `getVersion`, `listVersions` |
 
 ---
 
@@ -242,7 +261,7 @@ issue these RPCs will receive a gRPC `UNIMPLEMENTED` error.
 | `NOT_FOUND` | Secret or version does not exist in the backend |
 | `ALREADY_EXISTS` | `CreateSecret` is called with a `secret_id` that already exists in the same project |
 | `FAILED_PRECONDITION` | `AccessSecretVersion` on a non-`ENABLED` version; `"latest"` resolution finds no enabled version; state-transition from `DESTROYED` |
-| `UNIMPLEMENTED` | `SetIamPolicy`, `GetIamPolicy`, `TestIamPermissions` |
+| `PERMISSION_DENIED` | Caller lacks the required permission when `SECRET_MANAGER_ENFORCE_IAM=1` |
 
 All statuses are produced by `await context.abort(grpc.StatusCode.X, message)` inside the
 async servicer methods. The generated base class uses the synchronous `context.set_code` pattern
@@ -274,8 +293,8 @@ add version, access, disable, destroy, and expected error responses.
 
 The following are known gaps between the emulator and the production Secret Manager service:
 
-- **No authentication or authorization.** Any caller can read or modify any secret in any
-  project. IAM methods return `UNIMPLEMENTED` rather than enforcing access control.
+- **No authentication or authorization by default.** IAM policies are stored and optionally
+  enforced via `SECRET_MANAGER_ENFORCE_IAM=1`, but project-level RPCs are always allowed.
 - **Payloads stored in cleartext.** Both the in-memory dict and the on-disk JSON carry raw
   secret bytes (base64 on disk). There is no encryption at rest.
 - **No CMEK enforcement.** Customer-managed encryption key fields are accepted by the proto and

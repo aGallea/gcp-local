@@ -174,6 +174,8 @@ async def test_recursive_view_returns_email_aliases_and_scopes(
 
 
 async def test_token_endpoint_returns_stub_access_token(client: httpx.AsyncClient) -> None:
+    from gcp_local.services.metadata.tokens import STUB_TOKEN_PREFIX, decode_stub_token_email
+
     async with client:
         resp = await client.get(
             "/computeMetadata/v1/instance/service-accounts/default/token",
@@ -182,19 +184,22 @@ async def test_token_endpoint_returns_stub_access_token(client: httpx.AsyncClien
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("application/json")
     body = resp.json()
-    assert body["access_token"] == "ya29.gcp-local-stub-token"
+    assert body["access_token"].startswith(STUB_TOKEN_PREFIX)
+    assert decode_stub_token_email(body["access_token"]) is not None
     assert body["expires_in"] == 3600
     assert body["token_type"] == "Bearer"
 
 
 async def test_token_endpoint_accepts_and_ignores_scopes_query(client: httpx.AsyncClient) -> None:
+    from gcp_local.services.metadata.tokens import STUB_TOKEN_PREFIX
+
     async with client:
         resp = await client.get(
             "/computeMetadata/v1/instance/service-accounts/default/token?scopes=a,b",
             headers={"Metadata-Flavor": "Google"},
         )
     assert resp.status_code == 200
-    assert resp.json()["access_token"] == "ya29.gcp-local-stub-token"
+    assert resp.json()["access_token"].startswith(STUB_TOKEN_PREFIX)
 
 
 async def test_token_endpoint_rejects_unknown_alias_with_404(client: httpx.AsyncClient) -> None:
@@ -204,6 +209,19 @@ async def test_token_endpoint_rejects_unknown_alias_with_404(client: httpx.Async
             headers={"Metadata-Flavor": "Google"},
         )
     assert resp.status_code == 404
+
+
+async def test_token_endpoint_accepts_arbitrary_email_alias(client: httpx.AsyncClient) -> None:
+    from gcp_local.services.metadata.tokens import decode_stub_token_email
+
+    sa = "reader@my-project.iam.gserviceaccount.com"
+    async with client:
+        resp = await client.get(
+            f"/computeMetadata/v1/instance/service-accounts/{sa}/token",
+            headers={"Metadata-Flavor": "Google"},
+        )
+    assert resp.status_code == 200
+    assert decode_stub_token_email(resp.json()["access_token"]) == sa
 
 
 async def test_identity_endpoint_returns_jwt_with_audience(client: httpx.AsyncClient) -> None:

@@ -3,16 +3,32 @@
 import base64
 import json
 
-from gcp_local.services.metadata.tokens import build_access_token, build_id_token
+from gcp_local.services.metadata.tokens import (
+    STUB_TOKEN_PREFIX,
+    build_access_token,
+    build_id_token,
+    decode_stub_token_email,
+)
+
+_TEST_EMAIL = "svc@local-dev.iam.gserviceaccount.com"
 
 
 def test_build_access_token_returns_documented_shape() -> None:
-    token = build_access_token()
-    assert token == {
-        "access_token": "ya29.gcp-local-stub-token",
-        "expires_in": 3600,
-        "token_type": "Bearer",
-    }
+    token = build_access_token(_TEST_EMAIL)
+    assert token["expires_in"] == 3600
+    assert token["token_type"] == "Bearer"
+    assert token["access_token"].startswith(STUB_TOKEN_PREFIX)
+
+
+def test_build_access_token_encodes_email_in_token() -> None:
+    token = build_access_token(_TEST_EMAIL)
+    assert decode_stub_token_email(token["access_token"]) == _TEST_EMAIL
+
+
+def test_decode_stub_token_email_returns_none_for_unrecognized() -> None:
+    assert decode_stub_token_email("ya29.gcp-local-stub-token") is None
+    assert decode_stub_token_email("Bearer something") is None
+    assert decode_stub_token_email("") is None
 
 
 def _decode_jwt_payload(jwt: str) -> dict[str, object]:

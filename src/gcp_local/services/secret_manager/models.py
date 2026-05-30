@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class SecretVersionState(StrEnum):
@@ -26,6 +27,7 @@ class SecretRecord:
     annotations: dict[str, str]
     create_time: str
     versions: list[SecretVersion] = field(default_factory=list)
+    policy: dict[str, Any] = field(default_factory=dict)
 
     def highest_enabled_version(self) -> SecretVersion | None:
         enabled = [v for v in self.versions if v.state == SecretVersionState.ENABLED]

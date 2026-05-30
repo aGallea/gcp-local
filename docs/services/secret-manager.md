@@ -36,9 +36,41 @@ Default port: **8086**. The wire protocol is **gRPC** — unlike BigQuery and GC
 
 ---
 
+## IAM
+
+`SetIamPolicy`, `GetIamPolicy`, and `TestIamPermissions` are implemented with **accept-and-store** semantics. Policies are stored per secret and returned faithfully on `GetIamPolicy`.
+
+### Enforcement
+
+IAM enforcement is **off by default**. Enable it with:
+
+```bash
+SECRET_MANAGER_ENFORCE_IAM=1 python -m gcp_local
+```
+
+When enforcement is on, the emulator extracts caller identity from the `Authorization: Bearer ya29.gcp-local-<base64url(email)>` token (produced by the metadata server when any SA email is requested as an alias). It then checks the stored policy on the target secret. An empty or absent policy allows all callers.
+
+**Project-level RPCs** (`CreateSecret`, `ListSecrets`) bypass per-secret IAM enforcement and are always allowed.
+
+### Built-in roles
+
+| Role | Permissions granted |
+|---|---|
+| `roles/secretmanager.admin` | All Secret Manager permissions |
+| `roles/secretmanager.secretVersionManager` | `addVersion`, `enableVersion`, `disableVersion`, `destroyVersion`, `getVersion`, `listVersions` |
+| `roles/secretmanager.secretVersionAdder` | `addVersion` |
+| `roles/secretmanager.secretAccessor` | `accessSecretVersion` |
+| `roles/secretmanager.viewer` | `get`, `getVersion`, `listVersions` |
+
+### Default (empty policy = allow all)
+
+When no policy has been set on a secret and enforcement is enabled, all callers are permitted — matching the convenience default used in local development. Set an explicit policy to restrict access.
+
+---
+
 ## What's not emulated (v1)
 
-- **IAM** — `GetIamPolicy`, `SetIamPolicy`, and `TestIamPermissions` return `UNIMPLEMENTED`; no access control is enforced on any endpoint
+- **Project-level IAM** — `CreateSecret` and `ListSecrets` are always allowed regardless of `SECRET_MANAGER_ENFORCE_IAM`
 - **Customer-managed encryption keys (CMEK)** — `customer_managed_encryption` in `CreateSecret` is accepted and stored in labels; no encryption is applied; payloads are stored as-is in cleartext
 - **Replication policy enforcement** — `replication` (`automatic` or `user_managed`) is accepted in `CreateSecret` but not acted on; all secrets behave as if `automatic` replication is in effect
 - **Rotation schedules** — `rotation` and `topics` fields in `CreateSecret` / `UpdateSecret` are accepted and silently ignored
@@ -310,6 +342,7 @@ Deleting a secret removes it and all its versions in one call. There is no soft-
 |---|---|---|
 | `SECRET_MANAGER_EMULATOR_PORT` | `8086` | Port the Secret Manager gRPC server listens on |
 | `PERSIST` | `0` | Set to `1` to use disk-backed storage instead of in-memory |
+| `SECRET_MANAGER_ENFORCE_IAM` | `0` | Set to `1` to enforce stored IAM policies on secret-level RPCs |
 
 ### Disk layout (PERSIST=1)
 
@@ -371,4 +404,4 @@ await _run(lambda: client.access_secret_version(
 
 **Secret ID character set.** `secret_id` must match `[A-Za-z0-9_-]{1,255}`. Attempting to create a secret with a name containing dots, slashes, or spaces returns `INVALID_ARGUMENT`. Real Secret Manager enforces the same rule.
 
-**IAM stubs return `UNIMPLEMENTED`.** Calls to `GetIamPolicy`, `SetIamPolicy`, or `TestIamPermissions` return gRPC status `UNIMPLEMENTED`. Client code that calls these methods (e.g. to check permissions before accessing a secret) will raise `google.api_core.exceptions.NotImplemented`.
+**IAM enforcement is opt-in.** By default, all callers can read and write every secret. Set `SECRET_MANAGER_ENFORCE_IAM=1` to enable policy checking. See the [IAM](#iam) section for details.
