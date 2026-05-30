@@ -477,3 +477,44 @@ async def test_iam_test_permissions_reflects_granted_permissions_only(
     # viewer has .get but not .access
     assert "secretmanager.secrets.get" in resp.permissions
     assert "secretmanager.versions.access" not in resp.permissions
+
+
+@pytest.mark.asyncio
+async def test_iam_test_permissions_without_token_returns_empty_when_enforced(
+    iam_sm_port: int,
+) -> None:
+    """Enforcement on + non-empty policy + no caller token → no permissions granted."""
+    stub = _stub(iam_sm_port)
+
+    await _call(
+        stub.CreateSecret,
+        service_pb2.CreateSecretRequest(
+            parent="projects/p1",
+            secret_id="s",
+            secret=resources_pb2.Secret(),
+        ),
+    )
+    await _call(
+        stub.SetIamPolicy,
+        iam_policy_pb2.SetIamPolicyRequest(
+            resource="projects/p1/secrets/s",
+            policy=policy_pb2.Policy(
+                bindings=[
+                    policy_pb2.Binding(
+                        role="roles/secretmanager.viewer",
+                        members=[f"serviceAccount:{READER_EMAIL}"],
+                    ),
+                ]
+            ),
+        ),
+    )
+
+    # No metadata → caller is unauthenticated; the response must be empty (not crash).
+    resp = await _call(
+        stub.TestIamPermissions,
+        iam_policy_pb2.TestIamPermissionsRequest(
+            resource="projects/p1/secrets/s",
+            permissions=["secretmanager.secrets.get"],
+        ),
+    )
+    assert list(resp.permissions) == []

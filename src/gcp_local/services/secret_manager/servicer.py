@@ -102,7 +102,7 @@ def _caller_email(context: Any) -> str | None:
     return None
 
 
-def _has_permission(policy: dict, email: str, permission: str) -> bool:
+def _has_permission(policy: dict[str, Any], email: str, permission: str) -> bool:
     """Return True if email holds permission according to policy."""
     candidates = {f"serviceAccount:{email}", "allAuthenticatedUsers", "allUsers"}
     for binding in policy.get("bindings", []):
@@ -156,7 +156,7 @@ def _version_to_proto(
     )
 
 
-def _policy_to_proto(policy: dict) -> policy_pb2.Policy:
+def _policy_to_proto(policy: dict[str, Any]) -> policy_pb2.Policy:
     bindings = [
         policy_pb2.Binding(role=b["role"], members=b.get("members", []))
         for b in policy.get("bindings", [])
@@ -164,7 +164,7 @@ def _policy_to_proto(policy: dict) -> policy_pb2.Policy:
     return policy_pb2.Policy(version=policy.get("version", 1), bindings=bindings)
 
 
-def _proto_to_policy(proto: policy_pb2.Policy) -> dict:
+def _proto_to_policy(proto: policy_pb2.Policy) -> dict[str, Any]:
     return {
         "version": proto.version or 1,
         "bindings": [{"role": b.role, "members": list(b.members)} for b in proto.bindings],
@@ -176,7 +176,7 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
         self._storage = storage
         self._enforce_iam = enforce_iam
 
-    async def _check_iam(self, context: Any, policy: dict, permission: str) -> None:
+    async def _check_iam(self, context: Any, policy: dict[str, Any], permission: str) -> None:
         """Abort with PERMISSION_DENIED if caller lacks permission.
 
         No-op when enforcement is disabled or when the secret has no policy
@@ -476,7 +476,7 @@ class SecretManagerServicer(service_pb2_grpc.SecretManagerServiceServicer):
 
         email = _caller_email(context)
         if email is None:
-            return service_pb2.TestIamPermissionsResponse(permissions=[])
+            return iam_policy_pb2.TestIamPermissionsResponse(permissions=[])
 
         granted = [p for p in request.permissions if _has_permission(rec.policy, email, p)]
         return iam_policy_pb2.TestIamPermissionsResponse(permissions=granted)

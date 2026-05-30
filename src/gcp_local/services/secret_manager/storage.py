@@ -64,8 +64,10 @@ class SecretManagerStorage(Protocol):
         new_state: SecretVersionState,
     ) -> SecretVersion: ...
 
-    async def get_iam_policy(self, project: str, secret_id: str) -> dict: ...
-    async def set_iam_policy(self, project: str, secret_id: str, policy: dict) -> None: ...
+    async def get_iam_policy(self, project: str, secret_id: str) -> dict[str, Any]: ...
+    async def set_iam_policy(
+        self, project: str, secret_id: str, policy: dict[str, Any]
+    ) -> None: ...
 
     async def reset(self) -> None: ...
 
@@ -199,11 +201,11 @@ class InMemoryStorage:
                 v.destroy_time = rfc3339_now()
             return v
 
-    async def get_iam_policy(self, project: str, secret_id: str) -> dict:
+    async def get_iam_policy(self, project: str, secret_id: str) -> dict[str, Any]:
         rec = await self.get_secret(project, secret_id)
         return dict(rec.policy)
 
-    async def set_iam_policy(self, project: str, secret_id: str, policy: dict) -> None:
+    async def set_iam_policy(self, project: str, secret_id: str, policy: dict[str, Any]) -> None:
         rec = await self.get_secret(project, secret_id)
         rec.policy = policy
 
@@ -393,11 +395,11 @@ class DiskStorage:
             self._save(state)
             return v
 
-    async def get_iam_policy(self, project: str, secret_id: str) -> dict:
+    async def get_iam_policy(self, project: str, secret_id: str) -> dict[str, Any]:
         rec = await self.get_secret(project, secret_id)
         return dict(rec.policy)
 
-    async def set_iam_policy(self, project: str, secret_id: str, policy: dict) -> None:
+    async def set_iam_policy(self, project: str, secret_id: str, policy: dict[str, Any]) -> None:
         async with self._lock:
             state = self._load()
             key = (project, secret_id)
