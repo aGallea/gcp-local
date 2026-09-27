@@ -10,26 +10,19 @@ from fastapi.responses import JSONResponse, Response
 
 from gcp_local.core.state_hub import StateHub
 from gcp_local.services.gcs.errors import error_response
-from gcp_local.services.gcs.events import publish_finalize
 from gcp_local.services.gcs.ids import (
     GenerationCounter,
-    compute_crc32c_b64,
-    compute_md5_b64,
     new_session_id,
     rfc3339_now,
 )
-from gcp_local.services.gcs.models import ObjectRecord, UploadSession
-from gcp_local.services.gcs.preconditions import (
-    PreconditionFailed,
-    Preconditions,
-    evaluate_preconditions,
-)
+from gcp_local.services.gcs.models import UploadSession
+from gcp_local.services.gcs.operations import finalize_object
+from gcp_local.services.gcs.preconditions import PreconditionFailed, Preconditions
 from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
     GcsStorage,
     ObjectCollision,
-    ObjectNotFound,
     SessionNotFound,
 )
 
@@ -68,43 +61,6 @@ def _parse_multipart(body: bytes, content_type: str) -> tuple[dict[str, Any], by
     return metadata, raw_obj, obj_ct
 
 
-async def _finalize_object(
-    *,
-    storage: GcsStorage,
-    generations: GenerationCounter,
-    state_hub: StateHub | None,
-    bucket: str,
-    name: str,
-    data: bytes,
-    content_type: str,
-    user_metadata: dict[str, str],
-    preconditions: Preconditions,
-) -> ObjectRecord:
-    try:
-        current = await storage.get_object(bucket, name)
-    except ObjectNotFound:
-        current = None
-    evaluate_preconditions(preconditions, current=current)
-
-    now = rfc3339_now()
-    record = ObjectRecord(
-        bucket=bucket,
-        name=name,
-        size=len(data),
-        generation=generations.next(bucket),
-        metageneration=1,
-        content_type=content_type,
-        md5_hash=compute_md5_b64(data),
-        crc32c=compute_crc32c_b64(data),
-        time_created=now if current is None else current.time_created,
-        updated=now,
-        metadata=dict(user_metadata),
-    )
-    await storage.put_object(record, data)
-    await publish_finalize(state_hub, record)
-    return record
-
-
 def register_upload_routes(
     router: APIRouter,
     *,
@@ -138,7 +94,7 @@ def register_upload_routes(
                     return error_response(400, "invalid", "missing object name")
                 data = await request.body()
                 ct = request.headers.get("content-type", "application/octet-stream")
-                record = await _finalize_object(
+                record = await finalize_object(
                     storage=storage,
                     generations=generations,
                     state_hub=state_hub,
@@ -171,7 +127,7 @@ def register_upload_routes(
                     if isinstance(raw_user_meta, dict)
                     else {}
                 )
-                record = await _finalize_object(
+                record = await finalize_object(
                     storage=storage,
                     generations=generations,
                     state_hub=state_hub,
@@ -300,7 +256,7 @@ def register_upload_routes(
 
         data = await storage.get_session_bytes(upload_id)
         try:
-            record = await _finalize_object(
+            record = await finalize_object(
                 storage=storage,
                 generations=generations,
                 state_hub=state_hub,

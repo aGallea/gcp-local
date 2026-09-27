@@ -49,3 +49,11 @@ def compute_crc32c_b64(data: bytes) -> str:
 
 def rfc3339_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def encode_page_token(last_name: str) -> str:
+    return base64.urlsafe_b64encode(last_name.encode()).decode()
+
+
+def decode_page_token(token: str) -> str:
+    return base64.urlsafe_b64decode(token.encode()).decode()
