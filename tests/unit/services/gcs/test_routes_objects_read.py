@@ -140,3 +140,60 @@ async def test_delete_missing_object_404(client):
     c, _ = client
     r = await c.delete("/storage/v1/b/b/o/nope")
     assert r.status_code == 404
+
+
+async def test_media_download_sends_object_headers(client):
+    c, storage = client
+    record = rec(name="hashed.txt", size=5, gen=7, mgen=3)
+    record.md5_hash = "XUFAKrxLKna5cZ2REBfFkg=="
+    record.crc32c = "mnG7TA=="
+    await storage.put_object(record, b"hello")
+
+    r = await c.get("/download/storage/v1/b/b/o/hashed.txt", params={"alt": "media"})
+
+    assert r.status_code == 200
+    assert r.headers["x-goog-generation"] == "7"
+    assert r.headers["x-goog-metageneration"] == "3"
+    assert r.headers["x-goog-hash"] == "crc32c=mnG7TA==,md5=XUFAKrxLKna5cZ2REBfFkg=="
+    assert r.headers["x-goog-stored-content-length"] == "5"
+    assert r.headers["x-goog-stored-content-encoding"] == "identity"
+    assert r.headers["etag"] == '"7/3"'
+
+
+async def test_media_download_omits_empty_checksums(client):
+    c, _ = client
+    r = await c.get("/storage/v1/b/b/o/hello.txt", params={"alt": "media"})
+
+    assert r.status_code == 200
+    assert "x-goog-hash" not in r.headers
+    assert r.headers["x-goog-generation"] == "1"
+
+
+async def test_media_download_sends_only_the_checksums_it_has(client):
+    c, storage = client
+    record = rec(name="crc-only.txt", size=5)
+    record.crc32c = "mnG7TA=="
+    await storage.put_object(record, b"hello")
+
+    r = await c.get("/storage/v1/b/b/o/crc-only.txt", params={"alt": "media"})
+
+    assert r.headers["x-goog-hash"] == "crc32c=mnG7TA=="
+
+
+async def test_ranged_media_download_sends_object_headers(client):
+    c, storage = client
+    record = rec(name="ranged.txt", size=5, gen=9, mgen=2)
+    record.crc32c = "mnG7TA=="
+    await storage.put_object(record, b"hello")
+
+    r = await c.get(
+        "/storage/v1/b/b/o/ranged.txt",
+        params={"alt": "media"},
+        headers={"Range": "bytes=1-3"},
+    )
+
+    assert r.status_code == 206
+    assert r.headers["x-goog-generation"] == "9"
+    assert r.headers["x-goog-metageneration"] == "2"
+    assert r.headers["x-goog-hash"] == "crc32c=mnG7TA=="
+    assert r.headers["x-goog-stored-content-length"] == "5"

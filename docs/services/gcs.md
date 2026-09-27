@@ -17,7 +17,7 @@ Default port: **4443**.
 **Objects — reads**
 - `GET /storage/v1/b/{bucket}/o` — list objects with `prefix`, `delimiter`, `maxResults`, and `pageToken` cursor pagination
 - `GET /storage/v1/b/{bucket}/o/{name}` — get object metadata (`alt=json`, default) or raw bytes (`alt=media`)
-- `GET /download/storage/v1/b/{bucket}/o/{name}` — download endpoint used by the client library; supports `Range` header for partial content (HTTP 206)
+- `GET /download/storage/v1/b/{bucket}/o/{name}` — download endpoint used by the client library; supports `Range` header for partial content (HTTP 206); responses carry `x-goog-generation`, `x-goog-metageneration` and `x-goog-hash`, so `blob.generation` and checksum validation work after a download
 - `DELETE /storage/v1/b/{bucket}/o/{name}` — delete object
 
 **Objects — writes**
