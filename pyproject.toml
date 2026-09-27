@@ -21,7 +21,9 @@ dependencies = [
     "pydantic>=2.6",
     "google-crc32c>=1.5",
     "grpcio>=1.60",
-    "googleapis-common-protos>=1.63",
+    # 1.75.4 registers google/longrunning/operations.proto as operations_proto.proto,
+    # so the checked-in Firestore admin stubs can no longer resolve their import.
+    "googleapis-common-protos>=1.63,<1.75.4",
     "grpc-google-iam-v1>=0.13",
     "duckdb>=0.10",
     "sqlglot>=23.0",
