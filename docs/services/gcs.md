@@ -1,8 +1,8 @@
 # Cloud Storage emulator
 
-gcp-local's GCS service emulates the Google Cloud Storage JSON API. The official `google-cloud-storage` Python client works against it with no code changes beyond pointing at the emulator host.
+gcp-local's GCS service emulates the Google Cloud Storage JSON API, plus the object RPCs of the gRPC Storage v2 API (see [gRPC Storage v2](#grpc-storage-v2)). The official `google-cloud-storage` Python client works against it with no code changes beyond pointing at the emulator host.
 
-Default port: **4443**.
+Default ports: **4443** (REST) and **4444** (gRPC). Both serve the same buckets and objects.
 
 ---
 
@@ -45,7 +45,7 @@ Default port: **4443**.
 - Bucket ACLs and object ACLs (separate from IAM)
 - Rewrite API (`rewriteTo`) — use `copyTo` instead
 - XML API (S3-compatible endpoint)
-- gRPC Storage v2 (`google.storage.v2`)
+- gRPC Storage v2 beyond the six object RPCs listed under [gRPC Storage v2](#grpc-storage-v2)
 - Customer-managed encryption keys (CMEK)
 - Object holds (temporary and event-based)
 - Storage Transfer Service and Batch operations
@@ -124,6 +124,53 @@ bucket.blob("hello.txt").delete()
 # 6. Delete the bucket
 bucket.delete()
 ```
+
+---
+
+## gRPC Storage v2
+
+The same GCS service also serves `google.storage.v2.Storage` over gRPC on port **4444** (override with `GCS_GRPC_EMULATOR_PORT`). This is the API that `google-cloud-storage`'s asynchronous client, `AsyncGrpcClient`, speaks. The gRPC server shares its storage backend and generation counter with the REST API, so an object written over one wire is readable over the other at the same generation, and both publish the same `StateHub` events.
+
+### Implemented RPCs
+
+| RPC | Notes |
+|---|---|
+| `ListObjects` | `prefix`; `delimiter` (returns `prefixes`; an empty string means none); `page_size` / `page_token` |
+| `GetObject` | `generation` (the live generation only) and `if_generation_match` / `if_generation_not_match` / `if_metageneration_match` / `if_metageneration_not_match` |
+| `ReadObject` | Server-streaming, up to 2 MiB per message, each carrying its `crc32c`. The first message carries `metadata` and the whole-object `object_checksums`. `read_offset` (negative counts back from the end) and `read_limit`; the first message of a ranged read carries `content_range` |
+| `DeleteObject` | Same generation and precondition fields as `GetObject` |
+| `ComposeObject` | Up to 32 sources in one bucket; per-source `generation` and `object_preconditions.if_generation_match`; destination `if_generation_match` / `if_metageneration_match` |
+| `WriteObject` | Client-streaming. The first message carries `write_object_spec`; later messages carry `checksummed_data` at a `write_offset` that must equal the bytes sent so far. A chunk `crc32c` is checked on arrival, and `object_checksums` (crc32c, md5) and `object_size` are checked at `finish_write`. The spec's preconditions are evaluated when the object is finalized |
+
+Bucket names on the wire use the resource form `projects/_/buckets/<name>`. Errors map to gRPC status codes: a missing bucket or object is `NOT_FOUND`, a failed precondition is `FAILED_PRECONDITION`, a checksum mismatch or malformed request is `INVALID_ARGUMENT`, a `read_offset` past the end of the object is `OUT_OF_RANGE`, and every other RPC is `UNIMPLEMENTED`.
+
+### Connecting
+
+```python
+from google.api_core.client_options import ClientOptions
+from google.auth.credentials import AnonymousCredentials
+from google.cloud.storage.asyncio.async_grpc_client import AsyncGrpcClient
+
+client = AsyncGrpcClient(
+    credentials=AnonymousCredentials(),
+    client_options=ClientOptions(api_endpoint="localhost:4444"),
+).grpc_client  # a StorageAsyncClient on an insecure channel
+
+obj = await client.get_object(
+    request={"bucket": "projects/_/buckets/my-bucket", "object_": "hello.txt"}
+)
+```
+
+`AnonymousCredentials` together with an `api_endpoint` is what makes `AsyncGrpcClient` open an insecure channel. It needs `google-cloud-storage[grpc]` 3.14.1 or later. Create buckets over REST: the bucket RPCs are not emulated.
+
+### Not emulated over gRPC
+
+- Bucket RPCs (`CreateBucket`, `GetBucket`, `ListBuckets`, `DeleteBucket`, `UpdateBucket`, `LockBucketRetentionPolicy`) and the IAM RPCs
+- `BidiReadObject`, `BidiWriteObject` and appendable objects (`write_object_spec.appendable`)
+- Resumable writes: `StartResumableWrite`, `QueryWriteStatus`, `CancelResumableWrite`, and a `WriteObject` stream that begins with `upload_id`
+- `RewriteObject`, `MoveObject`, `RestoreObject`, `UpdateObject`
+- On `ListObjects`: `versions`, `soft_deleted`, `match_glob`, `filter` and `lexicographic_start` / `lexicographic_end` return `UNIMPLEMENTED`; `read_mask` and `include_trailing_delimiter` are ignored
+- On `ComposeObject`: `delete_source_objects` returns `UNIMPLEMENTED`
 
 ---
 
@@ -316,7 +363,8 @@ hub.subscribe(EVENT_FINALIZE, on_object_created)
 | Environment variable | Default | Description |
 |---|---|---|
 | `STORAGE_EMULATOR_HOST` | — | Consumed by `google-cloud-storage`; set to `http://localhost:4443` (include scheme) |
-| `GCS_EMULATOR_PORT` | `4443` | Port the GCS service listens on |
+| `GCS_EMULATOR_PORT` | `4443` | Port the GCS REST API listens on |
+| `GCS_GRPC_EMULATOR_PORT` | `4444` | Port the GCS gRPC Storage v2 API listens on |
 | `PERSIST` | `0` | Set to `1` to use disk-backed storage instead of in-memory |
 
 ### Disk layout (PERSIST=1)

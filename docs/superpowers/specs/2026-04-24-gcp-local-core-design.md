@@ -21,6 +21,7 @@ This document specifies the **core framework and v1 service set**. Each service 
 - Core framework: service registry, lifecycle, per-service listeners, shared storage/state hub, admin API
 - Five services: **GCS**, **BigQuery**, **Pub/Sub**, **Firestore**, **Secret Manager**
 - Both transports: REST (for GCS, BigQuery) and gRPC (for Pub/Sub, Firestore, Secret Manager)
+  - *Superseded:* GCS later also serves gRPC Storage v2 object RPCs on port 4444, alongside REST — see [`docs/services/gcs.md`](../../services/gcs.md#grpc-storage-v2).
 - In-memory persistence by default; opt-in disk persistence
 - Exact-shape error responses matching GCP's error envelope
 - Integration test suite driven by real `google-cloud-*` client libraries
