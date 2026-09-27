@@ -80,8 +80,8 @@ class Service(Protocol):
 
 `name` is the canonical service identifier (matches the entry-point key in
 `pyproject.toml`, e.g. `"bigquery"`). `default_ports` is a list of
-`Port(number: int, protocol: Literal["rest", "grpc"])` — most services expose
-a single port; the list type leaves room for services that need more than one.
+`Port(number: int, protocol: Literal["rest", "grpc"], name: str = "")` — most
+services expose a single port; GCS exposes REST and gRPC (see *Port overrides*).
 `HealthStatus(ok: bool, message: str = "")` is the health report the admin API
 surfaces.
 
@@ -197,11 +197,11 @@ name is not recognized.
 
 ## Port overrides
 
-Each service reads its port at `start()` time from `ctx.port_overrides`, using
-its `default_ports[0].number` as the fallback:
+Each service reads its ports at `start()` time through `ctx.port_for`, which
+falls back to the port's default number:
 
 ```python
-port = ctx.port_overrides.get(self.name, _DEFAULT_PORT)
+port = ctx.port_for(self.name, self.default_ports[0])
 ```
 
 The CLI populates `port_overrides` by looking for environment variables of the
@@ -215,10 +215,14 @@ SECRET_MANAGER_EMULATOR_PORT=18086
 
 Note that `SECRET_MANAGER` maps to the entry-point key `secret_manager`
 (underscores, not hyphens), so the env var key is derived by
-`name.upper() + "_EMULATOR_PORT"`. If a service declares multiple ports in
-`default_ports`, it is the service's own responsibility to use
-`port_overrides` (or a related convention) for each additional port; the core
-framework only handles the single override key.
+`name.upper() + "_EMULATOR_PORT"`.
+
+A service that listens on more than one port gives every port after the first
+a `name` (`Port(4444, "grpc", name="grpc")`). A named port is overridden on its
+own key, `<service>_<name>` — for GCS's gRPC port that is `gcs_grpc`, read from
+`GCS_GRPC_EMULATOR_PORT`. `port_override_key()` in `core/service.py` is the one
+place that naming rule lives. The unnamed primary port keeps the plain
+`<SERVICE>_EMULATOR_PORT` variable.
 
 ---
 

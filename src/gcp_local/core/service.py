@@ -11,6 +11,12 @@ Protocol_ = Literal["rest", "grpc"]
 class Port:
     number: int
     protocol: Protocol_
+    # Set on every port after the first, so each one gets its own override key.
+    name: str = ""
+
+
+def port_override_key(service: str, port: Port) -> str:
+    return f"{service}_{port.name}" if port.name else service
 
 
 @dataclass

@@ -74,6 +74,18 @@ def test_port_overrides(tmp_path: Path):
     assert s.port_overrides == {"gcs": 5555, "bigquery": 9051}
 
 
+def test_named_port_override_reads_its_own_env_var(tmp_path: Path):
+    r = make_registry()
+    gcs = r.get("gcs")
+    gcs.default_ports = [Port(1, "rest"), Port(2, "grpc", name="grpc")]
+    s = build_settings(
+        env={"GCS_EMULATOR_PORT": "5555", "GCS_GRPC_EMULATOR_PORT": "5556"},
+        registry=r,
+        default_data_dir=tmp_path,
+    )
+    assert s.port_overrides == {"gcs": 5555, "gcs_grpc": 5556}
+
+
 def test_admin_port_override(tmp_path: Path):
     s = build_settings(
         env={"GCP_LOCAL_ADMIN_PORT": "4600"},
