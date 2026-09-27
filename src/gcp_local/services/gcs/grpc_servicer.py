@@ -1,4 +1,5 @@
 import base64
+import binascii
 import hashlib
 from collections.abc import AsyncIterator
 from typing import Any, NoReturn
@@ -111,6 +112,17 @@ def record_to_proto(record: ObjectRecord) -> Any:
     )
 
 
+def _start_after(page_token: str) -> str | None:
+    if not page_token:
+        return None
+    try:
+        return decode_page_token(page_token)
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise GrpcError(
+            grpc.StatusCode.INVALID_ARGUMENT, f"page_token {page_token!r} is malformed"
+        ) from exc
+
+
 def _check_generation(record: ObjectRecord, generation: int) -> None:
     if generation and generation != record.generation:
         raise ObjectNotFound(f"{record.name}#{generation}")
@@ -166,7 +178,7 @@ class StorageServicer(storage_pb2_grpc.StorageServicer):
                 prefix=request.prefix,
                 delimiter=request.delimiter or None,
                 max_results=page_size,
-                start_after=decode_page_token(request.page_token) if request.page_token else None,
+                start_after=_start_after(request.page_token),
             )
         except GRPC_MAPPED_ERRORS as exc:
             await _abort(context, exc)

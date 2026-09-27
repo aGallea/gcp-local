@@ -181,6 +181,16 @@ async def test_list_objects_pages_with_page_size_and_token(h: _Harness) -> None:
     assert second.next_page_token == ""
 
 
+@pytest.mark.parametrize("token", ["zz", "_w=="])
+async def test_list_objects_with_a_malformed_page_token_is_invalid(h: _Harness, token: str) -> None:
+    code, _ = await _expect_abort(
+        lambda ctx: h.servicer.ListObjects(
+            storage_pb2.ListObjectsRequest(parent=PARENT, page_token=token), ctx
+        )
+    )
+    assert code == grpc.StatusCode.INVALID_ARGUMENT
+
+
 async def test_list_objects_rejects_versions(h: _Harness) -> None:
     code, _ = await _expect_abort(
         lambda ctx: h.servicer.ListObjects(
