@@ -75,8 +75,14 @@ def _preconditions(message: Message) -> Preconditions:
     )
 
 
-def _crc32c_int(record: ObjectRecord) -> int:
-    return int.from_bytes(base64.b64decode(record.crc32c), "big")
+def _checksums(record: ObjectRecord) -> Any:
+    # UI uploads store empty checksums; a present crc32c=0 would claim a checksum the data lacks.
+    checksums = storage_pb2.ObjectChecksums()
+    if record.crc32c:
+        checksums.crc32c = int.from_bytes(base64.b64decode(record.crc32c), "big")
+    if record.md5_hash:
+        checksums.md5_hash = base64.b64decode(record.md5_hash)
+    return checksums
 
 
 def _timestamp(rfc3339: str) -> Timestamp:
@@ -98,9 +104,7 @@ def record_to_proto(record: ObjectRecord) -> Any:
         content_language=record.content_language,
         content_disposition=record.content_disposition,
         cache_control=record.cache_control,
-        checksums=storage_pb2.ObjectChecksums(
-            crc32c=_crc32c_int(record), md5_hash=base64.b64decode(record.md5_hash)
-        ),
+        checksums=_checksums(record),
         create_time=_timestamp(record.time_created),
         update_time=_timestamp(record.updated),
         metadata=dict(record.metadata),
@@ -194,9 +198,7 @@ class StorageServicer(storage_pb2_grpc.StorageServicer):
 
         first = storage_pb2.ReadObjectResponse(
             metadata=record_to_proto(record),
-            object_checksums=storage_pb2.ObjectChecksums(
-                crc32c=_crc32c_int(record), md5_hash=base64.b64decode(record.md5_hash)
-            ),
+            object_checksums=_checksums(record),
         )
         if request.read_offset or request.read_limit:
             first.content_range.CopyFrom(

@@ -16,7 +16,7 @@ from gcp_local.services.gcs.grpc_servicer import (
     parse_bucket_name,
 )
 from gcp_local.services.gcs.ids import GenerationCounter
-from gcp_local.services.gcs.models import BucketMeta
+from gcp_local.services.gcs.models import BucketMeta, ObjectRecord
 from gcp_local.services.gcs.operations import finalize_object
 from gcp_local.services.gcs.preconditions import Preconditions
 from gcp_local.services.gcs.storage import InMemoryStorage
@@ -211,6 +211,39 @@ async def test_get_object_returns_metadata_with_checksums(h: _Harness) -> None:
     assert obj.content_type == "text/plain"
     assert obj.checksums.crc32c == google_crc32c.value(b"hello")
     assert obj.create_time.seconds > 0
+
+
+async def _put_without_checksums(h: _Harness, name: str, data: bytes) -> None:
+    record = ObjectRecord(
+        bucket=BUCKET,
+        name=name,
+        size=len(data),
+        generation=h.generations.next(BUCKET),
+        metageneration=1,
+        md5_hash="",
+        crc32c="",
+        time_created="2026-01-01T00:00:00Z",
+        updated="2026-01-01T00:00:00Z",
+    )
+    await h.storage.put_object(record, data)
+
+
+async def test_get_object_without_stored_checksums_omits_them(h: _Harness) -> None:
+    await _put_without_checksums(h, "ui.txt", b"hello")
+    obj = await h.servicer.GetObject(
+        _obj_request(storage_pb2.GetObjectRequest, "ui.txt"), _FakeContext()
+    )
+    assert not obj.checksums.HasField("crc32c")
+    assert obj.checksums.md5_hash == b""
+
+
+async def test_read_object_without_stored_checksums_omits_object_checksums(h: _Harness) -> None:
+    await _put_without_checksums(h, "ui.txt", b"hello")
+    (first,) = await _read(h, _obj_request(storage_pb2.ReadObjectRequest, "ui.txt"))
+    assert not first.object_checksums.HasField("crc32c")
+    assert first.object_checksums.md5_hash == b""
+    assert not first.metadata.checksums.HasField("crc32c")
+    assert first.checksummed_data.content == b"hello"
 
 
 async def test_get_object_missing_is_not_found(h: _Harness) -> None:
