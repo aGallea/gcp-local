@@ -62,7 +62,8 @@ class GcsService:
     async def _start_grpc(self, port: int) -> None:
         assert self._storage is not None
         assert self._ctx is not None
-        self._grpc_server = grpc.aio.server()
+        # gRPC defaults to SO_REUSEPORT, which lets a second emulator share the port silently.
+        self._grpc_server = grpc.aio.server(options=[("grpc.so_reuseport", 0)])
         self._grpc_server.add_insecure_port(f"[::]:{port}")
         servicer = StorageServicer(
             storage=self._storage,

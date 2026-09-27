@@ -4,7 +4,7 @@ Provides a fully-wired admin app whose only running service is GCS in
 in-memory mode, plus a real ``GcsStorage`` so tests can seed state.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import pytest
@@ -18,9 +18,16 @@ from gcp_local.services.gcs import GcsService
 
 
 @pytest.fixture
-async def gcs_ui_client(tmp_path: Path) -> AsyncIterator[tuple[AsyncClient, GcsService]]:
+async def gcs_ui_client(
+    tmp_path: Path,
+    unused_tcp_port_factory: Callable[[], int],
+) -> AsyncIterator[tuple[AsyncClient, GcsService]]:
     svc = GcsService()
-    ctx = Context(persist=False, data_dir=tmp_path)
+    ctx = Context(
+        persist=False,
+        data_dir=tmp_path,
+        port_overrides={"gcs": unused_tcp_port_factory(), "gcs_grpc": unused_tcp_port_factory()},
+    )
     lc = Lifecycle([svc], ctx)
     await lc.start_all()
     try:

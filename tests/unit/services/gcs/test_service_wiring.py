@@ -49,7 +49,11 @@ async def test_storage_property_exposed_after_start(tmp_path):
     from gcp_local.services.gcs import GcsService
 
     svc = GcsService()
-    ctx = Context(persist=False, data_dir=tmp_path)
+    ctx = Context(
+        persist=False,
+        data_dir=tmp_path,
+        port_overrides={"gcs": _free_port(), "gcs_grpc": _free_port()},
+    )
     await svc.start(ctx)
     try:
         assert svc.storage is not None
@@ -108,3 +112,27 @@ async def test_grpc_port_serves_the_same_storage_as_rest(tmp_path: Path) -> None
         assert list(resp.objects) == []
     finally:
         await svc.stop()
+
+
+async def test_a_second_service_on_a_taken_grpc_port_fails_to_start(tmp_path: Path) -> None:
+    grpc_port = _free_port()
+    first, second = GcsService(), GcsService()
+    await first.start(
+        Context(
+            persist=False,
+            data_dir=tmp_path,
+            port_overrides={"gcs": _free_port(), "gcs_grpc": grpc_port},
+        )
+    )
+    try:
+        with pytest.raises(RuntimeError, match="Failed to bind"):
+            await second.start(
+                Context(
+                    persist=False,
+                    data_dir=tmp_path,
+                    port_overrides={"gcs": _free_port(), "gcs_grpc": grpc_port},
+                )
+            )
+    finally:
+        await second.stop()
+        await first.stop()
