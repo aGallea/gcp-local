@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from gcp_local.core.state_hub import StateHub
 from gcp_local.services.gcs.errors import error_response
 from gcp_local.services.gcs.events import publish_delete
+from gcp_local.services.gcs.models import ObjectRecord
 from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
@@ -34,6 +35,25 @@ def _parse_range(header: str, size: int) -> tuple[int, int] | None:
     if lo < 0 or hi >= size or lo > hi:
         return None
     return lo, hi
+
+
+def media_headers(record: ObjectRecord) -> dict[str, str]:
+    headers = {
+        "Content-Type": record.content_type,
+        "ETag": str(record.etag),
+        "x-goog-generation": str(record.generation),
+        "x-goog-metageneration": str(record.metageneration),
+        "x-goog-stored-content-length": str(record.size),
+        "x-goog-stored-content-encoding": record.content_encoding or "identity",
+    }
+    hashes = [
+        f"{label}={value}"
+        for label, value in (("crc32c", record.crc32c), ("md5", record.md5_hash))
+        if value
+    ]
+    if hashes:
+        headers["x-goog-hash"] = ",".join(hashes)
+    return headers
 
 
 def register_object_read_routes(
@@ -103,14 +123,11 @@ def register_object_read_routes(
                 content=partial,
                 status_code=206,
                 headers={
+                    **media_headers(record),
                     "Content-Range": f"bytes {lo}-{hi}/{len(data)}",
-                    "Content-Type": record.content_type,
                 },
             )
-        return Response(
-            content=data,
-            media_type=record.content_type,
-        )
+        return Response(content=data, headers=media_headers(record))
 
     @router.get("/download/storage/v1/b/{bucket}/o/{name:path}")
     async def download_object(

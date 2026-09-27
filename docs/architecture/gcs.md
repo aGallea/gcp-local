@@ -128,6 +128,12 @@ Sessions older than 7 days are garbage-collected at service start (`DiskStorage.
 
 ---
 
+## Media downloads
+
+`alt=media` responses (full and `206` ranged) carry the headers real GCS sends, built by `media_headers()` in `routes/objects_read.py`: `x-goog-generation`, `x-goog-metageneration`, `x-goog-hash` (`crc32c=…,md5=…`), `x-goog-stored-content-length`, `x-goog-stored-content-encoding` (`identity` when unset) and `ETag`. `google-cloud-storage` rebuilds `blob.generation`, `metageneration`, `crc32c` and `md5Hash` from them after `download_as_bytes()` / `download_to_filename()`, pins retried range requests to the generation, and validates the `checksum=` argument against `x-goog-hash` (skipped for `206`). A checksum stored empty — objects uploaded through the browser UI — is left out of `x-goog-hash`, so the client skips validation for it rather than failing.
+
+---
+
 ## Composite operations
 
 Three multi-object routes are registered by `register_copy_compose_routes()` in `routes/copy_compose.py`.

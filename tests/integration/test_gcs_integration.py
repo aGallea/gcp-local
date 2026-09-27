@@ -11,6 +11,7 @@ google-cloud-storage calls (which are synchronous/blocking) are dispatched via
 
 import asyncio
 import io
+import logging
 import os
 
 import pytest
@@ -116,6 +117,58 @@ async def test_ranged_download(client):
     await asyncio.to_thread(bucket.blob("o").upload_from_string, b"0123456789")
     got = await asyncio.to_thread(lambda: bucket.blob("o").download_as_bytes(start=2, end=5))
     assert got == b"2345"
+
+
+async def test_download_as_bytes_keeps_generation(client):
+    bucket = await asyncio.to_thread(client.create_bucket, "genb")
+    uploaded = bucket.blob("o")
+    await asyncio.to_thread(uploaded.upload_from_string, b"payload")
+    assert uploaded.generation is not None
+
+    blob = bucket.blob("o")
+    await asyncio.to_thread(blob.download_as_bytes)
+
+    assert blob.generation == uploaded.generation
+    assert blob.metageneration == uploaded.metageneration
+    assert blob.crc32c == uploaded.crc32c
+    assert blob.md5_hash == uploaded.md5_hash
+
+
+async def test_download_to_filename_keeps_generation(client, tmp_path):
+    bucket = await asyncio.to_thread(client.create_bucket, "genf")
+    uploaded = bucket.blob("o")
+    await asyncio.to_thread(uploaded.upload_from_string, b"payload")
+
+    blob = bucket.blob("o")
+    target = tmp_path / "o.bin"
+    await asyncio.to_thread(blob.download_to_filename, str(target))
+
+    assert target.read_bytes() == b"payload"
+    assert blob.generation == uploaded.generation
+
+
+@pytest.mark.parametrize("checksum", ["crc32c", "md5"])
+async def test_download_validates_checksum(client, caplog, checksum):
+    bucket = await asyncio.to_thread(client.create_bucket, f"sum-{checksum}")
+    await asyncio.to_thread(bucket.blob("o").upload_from_string, b"checked payload")
+
+    with caplog.at_level(logging.INFO, logger="google.cloud.storage._media._helpers"):
+        got = await asyncio.to_thread(lambda: bucket.blob("o").download_as_bytes(checksum=checksum))
+
+    assert got == b"checked payload"
+    assert "checksum was returned" not in caplog.text
+
+
+async def test_ranged_download_with_checksum_keeps_generation(client):
+    bucket = await asyncio.to_thread(client.create_bucket, "rangesum")
+    uploaded = bucket.blob("o")
+    await asyncio.to_thread(uploaded.upload_from_string, b"0123456789")
+
+    blob = bucket.blob("o")
+    got = await asyncio.to_thread(lambda: blob.download_as_bytes(start=2, end=5, checksum="crc32c"))
+
+    assert got == b"2345"
+    assert blob.generation == uploaded.generation
 
 
 async def test_delete_then_reload_raises_not_found(client):
