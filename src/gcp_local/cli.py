@@ -14,6 +14,7 @@ from gcp_local.core.admin_api import build_admin_app
 from gcp_local.core.context import Context
 from gcp_local.core.lifecycle import Lifecycle
 from gcp_local.core.registry import ServiceRegistry
+from gcp_local.core.service import port_override_key
 from gcp_local.core.state_hub import StateHub
 
 log = logging.getLogger(__name__)
@@ -43,9 +44,11 @@ def build_settings(
 
     port_overrides: dict[str, int] = {}
     for name in registry.names():
-        key = f"{name.upper()}_EMULATOR_PORT"
-        if key in env and env[key].strip():
-            port_overrides[name] = int(env[key])
+        ports = registry.get(name).default_ports
+        for key in sorted({name} | {port_override_key(name, p) for p in ports}):
+            env_key = f"{key.upper()}_EMULATOR_PORT"
+            if env.get(env_key, "").strip():
+                port_overrides[key] = int(env[env_key])
 
     return Settings(
         services=services,

@@ -1,6 +1,6 @@
 from typing import ClassVar
 
-from gcp_local.core.service import HealthStatus, Port, Service
+from gcp_local.core.service import HealthStatus, Port, Service, port_override_key
 
 
 class GoodService:
@@ -35,3 +35,11 @@ def test_health_status_defaults():
 def test_service_protocol_structural():
     svc = GoodService()
     assert isinstance(svc, Service)
+
+
+def test_port_override_key_is_the_service_name_for_an_unnamed_port():
+    assert port_override_key("gcs", Port(4443, "rest")) == "gcs"
+
+
+def test_port_override_key_appends_the_port_name_for_a_named_port():
+    assert port_override_key("gcs", Port(4444, "grpc", name="grpc")) == "gcs_grpc"

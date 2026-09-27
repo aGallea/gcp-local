@@ -10,6 +10,7 @@ This guide covers running `gcp-local` via Docker, docker-compose, and Kubernetes
 |-----------------|------|-------|
 | Admin API       | 4510 | `/_emulator/health`, `/_emulator/services`, `/_emulator/reset` |
 | GCS             | 4443 | REST; client honors `STORAGE_EMULATOR_HOST` |
+| GCS (gRPC)      | 4444 | gRPC Storage v2 object RPCs; `AsyncGrpcClient` with `client_options.api_endpoint` |
 | BigQuery        | 9050 | REST; client honors `BIGQUERY_EMULATOR_HOST` |
 | Secret Manager  | 8086 | gRPC; no standard env var (use `client_options.api_endpoint`) |
 | Pub/Sub         | 8085 | gRPC; client honors `PUBSUB_EMULATOR_HOST` |
@@ -119,6 +120,7 @@ services:
     ports:
       - "4510:4510"   # admin
       - "4443:4443"   # gcs
+      - "4444:4444"   # gcs grpc
       - "9050:9050"   # bigquery
       - "8086:8086"   # secret manager
     volumes:

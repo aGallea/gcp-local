@@ -1,25 +1,16 @@
-import base64
-
 from fastapi import APIRouter, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from gcp_local.core.state_hub import StateHub
 from gcp_local.services.gcs.errors import error_response
 from gcp_local.services.gcs.events import publish_delete
+from gcp_local.services.gcs.ids import decode_page_token, encode_page_token
 from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
     GcsStorage,
     ObjectNotFound,
 )
-
-
-def _encode_page_token(last_name: str) -> str:
-    return base64.urlsafe_b64encode(last_name.encode()).decode()
-
-
-def _decode_page_token(token: str) -> str:
-    return base64.urlsafe_b64decode(token.encode()).decode()
 
 
 def _parse_range(header: str, size: int) -> tuple[int, int] | None:
@@ -51,7 +42,7 @@ def register_object_read_routes(
         maxResults: int | None = Query(default=None, alias="maxResults"),
         pageToken: str | None = Query(default=None, alias="pageToken"),
     ) -> JSONResponse:
-        start_after = _decode_page_token(pageToken) if pageToken else None
+        start_after = decode_page_token(pageToken) if pageToken else None
         try:
             objects, prefixes = await storage.list_objects_with_prefixes(
                 bucket,
@@ -71,7 +62,7 @@ def register_object_read_routes(
         if prefixes:
             body["prefixes"] = prefixes
         if maxResults is not None and len(objects) == maxResults:
-            body["nextPageToken"] = _encode_page_token(objects[-1].name)
+            body["nextPageToken"] = encode_page_token(objects[-1].name)
         return JSONResponse(body)
 
     @router.get("/storage/v1/b/{bucket}/o/{name:path}")

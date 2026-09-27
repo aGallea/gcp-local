@@ -55,7 +55,7 @@ Alpha. Five services are implemented today; v1 is feature-complete. See [ROADMAP
 | Service | Status | Default port | Wire | Usage | Architecture |
 |---|---|---|---|---|---|
 | BigQuery | Alpha | 9050 | REST | [usage](docs/services/bigquery.md) | [internals](docs/architecture/bigquery.md) |
-| GCS | Alpha | 4443 | REST | [usage](docs/services/gcs.md) | [internals](docs/architecture/gcs.md) |
+| GCS | Alpha | 4443, 4444 | REST, gRPC | [usage](docs/services/gcs.md) | [internals](docs/architecture/gcs.md) |
 | Secret Manager | Alpha | 8086 | gRPC | [usage](docs/services/secret-manager.md) | [internals](docs/architecture/secret-manager.md) |
 | Pub/Sub | Alpha | 8085 | gRPC | [usage](docs/services/pubsub.md) | [internals](docs/architecture/pubsub.md) |
 | Firestore | Alpha | 8080 | gRPC | [usage](docs/services/firestore.md) | [internals](docs/architecture/firestore.md) |
@@ -88,7 +88,7 @@ curl http://localhost:4510/_emulator/health
 Pre-built images are published to GitHub Container Registry on every push to `master` and on every `v*` tag:
 
 ```bash
-docker run --rm -p 4510:4510 -p 4443:4443 -p 8080:8080 -p 8086:8086 -p 9050:9050 ghcr.io/agallea/gcp-local:latest
+docker run --rm -p 4510:4510 -p 4443:4443 -p 4444:4444 -p 8080:8080 -p 8086:8086 -p 9050:9050 ghcr.io/agallea/gcp-local:latest
 curl http://localhost:4510/_emulator/health
 ```
 
@@ -98,7 +98,7 @@ To build the image locally instead:
 
 ```bash
 docker build -f docker/Dockerfile -t gcp-local:dev .
-docker run --rm -p 4510:4510 -p 4443:4443 -p 8080:8080 -p 8086:8086 -p 9050:9050 gcp-local:dev
+docker run --rm -p 4510:4510 -p 4443:4443 -p 4444:4444 -p 8080:8080 -p 8086:8086 -p 9050:9050 gcp-local:dev
 curl http://localhost:4510/_emulator/health
 ```
 

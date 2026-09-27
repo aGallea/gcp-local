@@ -2,7 +2,7 @@
 
 ## At a glance
 
-The GCS service is a pure REST emulator of the Google Cloud Storage JSON API v1. It is built on FastAPI + uvicorn and runs inside the same process as every other gcp-local service. Two storage backends are available: an all-in-memory backend (the default) and an on-disk backend that is activated when `PERSIST=1` is set. Neither backend depends on DuckDB; the GCS layer has no SQL component. Generation and metageneration counters are first-class concepts, tracked per object, and are used by the conditional-request machinery (`If-Match` / `If-None-Match` style preconditions). State-hub events are emitted on every mutation so that future cross-service consumers (e.g., BQ load jobs) can subscribe without polling.
+The GCS service emulates the Google Cloud Storage JSON API v1 over REST, and the object RPCs of the gRPC Storage v2 API. The REST side is built on FastAPI + uvicorn and the gRPC side on `grpc.aio`; both run inside the same process as every other gcp-local service. Two storage backends are available: an all-in-memory backend (the default) and an on-disk backend that is activated when `PERSIST=1` is set. Neither backend depends on DuckDB; the GCS layer has no SQL component. Generation and metageneration counters are first-class concepts, tracked per object, and are used by the conditional-request machinery (`If-Match` / `If-None-Match` style preconditions). State-hub events are emitted on every mutation so that future cross-service consumers (e.g., BQ load jobs) can subscribe without polling.
 
 For usage — client configuration, bucket/object CRUD examples, resumable upload guidance, and known gaps — see [`docs/services/gcs.md`](../services/gcs.md). This document covers implementation internals.
 
@@ -10,7 +10,9 @@ For usage — client configuration, bucket/object CRUD examples, resumable uploa
 
 ## Wire & port
 
-The service listens on **port 4443** (the same default as `fake-gcs-server`), which pairs directly with `STORAGE_EMULATOR_HOST=http://localhost:4443`. The port can be overridden via the core's `Settings.port_overrides` mechanism. The admin/health port follows the standard gcp-local pattern on **4510**. No TLS is used; the emulator is local-only.
+The service listens on **port 4443** for REST (the same default as `fake-gcs-server`), which pairs directly with `STORAGE_EMULATOR_HOST=http://localhost:4443`, and on **port 4444** for gRPC. The REST port is the service's primary port (`GCS_EMULATOR_PORT`); the gRPC port is the named port `grpc`, overridden on the `gcs_grpc` key (`GCS_GRPC_EMULATOR_PORT`).
+
+`GcsService.start()` builds one storage backend and owns one `GenerationCounter`, then hands both to the FastAPI router and to the `grpc.aio` server's `StorageServicer` (`grpc_servicer.py`). That sharing is what keeps generations consistent across the two wires. `stop()` stops the gRPC server, then uvicorn. The admin/health port follows the standard gcp-local pattern on **4510**. No TLS is used; the emulator is local-only.
 
 ---
 
@@ -60,7 +62,7 @@ Each stored object carries the following fields (defined in `models.ObjectRecord
 | `content_encoding`, `content_language`, `content_disposition`, `cache_control` | standard HTTP headers, default empty |
 | `md5_hash` | base-64 MD5 of the payload bytes (server-computed) |
 | `crc32c` | base-64 CRC32C via `google-crc32c` (server-computed) |
-| `time_created` | RFC3339 timestamp; frozen at first write, not reset on overwrite |
+| `time_created` | RFC3339 timestamp; set to now on every write, so an overwrite gets a fresh value like real GCS |
 | `updated` | RFC3339 timestamp; updated on every write and on metadata PATCH |
 | `metadata` | `dict[str, str]` — user-controlled key/value pairs (`x-goog-meta-*`) |
 | `etag` | computed field: `"<generation>/<metageneration>"` |
@@ -135,6 +137,8 @@ Three multi-object routes are registered by `register_copy_compose_routes()` in 
 **Copy (`POST /storage/v1/b/{src_bucket}/o/{src_name}/copyTo/b/{dst_bucket}/o/{dst_name:path}`):** Reads the source object bytes and record, creates a new `ObjectRecord` in the destination bucket with a fresh generation (metadata fields from the source, `time_created` reset to now), calls `storage.put_object()`, and publishes `gcs.object.finalize`.
 
 **Compose (`POST /storage/v1/b/{bucket}/o/{name}/compose`):** Accepts a JSON body with a `sourceObjects` array (up to 32 entries, all in the same bucket). Bytes from each source are concatenated in order; MD5 and CRC32C are recomputed over the combined payload. The result is written as a new object with a fresh generation.
+
+Upload finalization (`finalize_object`) and compose (`compose_object`) live in `operations.py`, shared by the REST routes and the gRPC servicer, so both wires evaluate preconditions and publish `gcs.object.finalize` the same way.
 
 **Rewrite:** The `rewriteTo` API surface is not implemented. The spec and `docs/services/gcs.md` document this gap; callers should use `copyTo` instead.
 
@@ -216,6 +220,10 @@ Key HTTP status mappings:
 
 Quota errors are not enforced; there are no rate limits or size caps in the emulator.
 
+The gRPC servicer maps the same exceptions through `errors.grpc_error_for()` to a `core.errors.GrpcError`: `BucketNotFound` / `ObjectNotFound` → `NOT_FOUND`, `PreconditionFailed` → `FAILED_PRECONDITION`, `InvalidCompose` → `INVALID_ARGUMENT`, `ObjectCollision` → `ALREADY_EXISTS`. Checksum mismatches and malformed requests raise `GrpcError(INVALID_ARGUMENT)` directly.
+
+**Descriptor-pool collision.** `google-cloud-storage` registers its own proto-plus copy of `google.storage.v2` in the default descriptor pool. When it loads first, our generated `storage_pb2` falls back to that copy, where the `object` field of `GetObjectRequest`, `ReadObjectRequest` and `DeleteObjectRequest` is named `object_`. The field number, and so the wire format, is the same; `grpc_servicer.object_field()` resolves the name either way.
+
 ---
 
 ## Tests
@@ -228,8 +236,9 @@ Unit tests live under `tests/unit/services/gcs/` and are organized by concern:
 - `test_routes_copy_compose.py`, `test_routes_objects_read.py`, `test_routes_objects_write.py`, `test_routes_buckets.py` — per-route handler tests.
 - `test_events.py` — state-hub event emission and payload schema.
 - `test_ids.py`, `test_models.py`, `test_service_wiring.py` — utility and wiring coverage.
+- `test_grpc_servicer.py` — each gRPC RPC called directly with a fake servicer context.
 
-Integration tests in `tests/integration/test_gcs_integration.py` drive the real `google-cloud-storage` Python client library against a live in-process emulator, covering the full CRUD lifecycle, pagination, ranged downloads, preconditions, copy, and compose.
+Integration tests in `tests/integration/test_gcs_integration.py` drive the real `google-cloud-storage` Python client library against a live in-process emulator, covering the full CRUD lifecycle, pagination, ranged downloads, preconditions, copy, and compose. `tests/integration/test_gcs_grpc_integration.py` drives the gRPC API with the client's `AsyncGrpcClient`, including writes over one wire read back over the other.
 
 ---
 

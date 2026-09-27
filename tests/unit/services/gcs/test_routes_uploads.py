@@ -72,6 +72,25 @@ async def test_simple_upload_overwrite_increments_generation(wired):
     assert body["generation"] == "2"
 
 
+async def test_overwriting_an_upload_gives_a_new_generation_and_creation_time(wired, monkeypatch):
+    stamps = iter(["2026-01-01T00:00:01.000000Z", "2026-01-01T00:00:02.000000Z"])
+    monkeypatch.setattr("gcp_local.services.gcs.operations.rfc3339_now", lambda: next(stamps))
+    c, _, _ = wired
+    bodies = []
+    for content in (b"v1", b"v2"):
+        r = await c.post(
+            "/upload/storage/v1/b/b/o",
+            params={"uploadType": "media", "name": "o"},
+            content=content,
+            headers={"Content-Type": "text/plain"},
+        )
+        bodies.append(r.json())
+    first, second = bodies
+    assert first["generation"] != second["generation"]
+    assert second["timeCreated"] > first["timeCreated"]
+    assert second["timeCreated"] == second["updated"]
+
+
 async def test_multipart_upload(wired):
     c, _, _ = wired
     boundary = "===GCSBOUNDARY==="

@@ -4,13 +4,11 @@ from fastapi.responses import JSONResponse
 from gcp_local.core.state_hub import StateHub
 from gcp_local.services.gcs.errors import error_response
 from gcp_local.services.gcs.events import publish_finalize
-from gcp_local.services.gcs.ids import (
-    GenerationCounter,
-    compute_crc32c_b64,
-    compute_md5_b64,
-    rfc3339_now,
-)
+from gcp_local.services.gcs.ids import GenerationCounter, rfc3339_now
 from gcp_local.services.gcs.models import ObjectRecord
+from gcp_local.services.gcs.operations import ComposeSource, InvalidCompose
+from gcp_local.services.gcs.operations import compose_object as compose
+from gcp_local.services.gcs.preconditions import Preconditions
 from gcp_local.services.gcs.routes._serialize import object_to_api_dict
 from gcp_local.services.gcs.storage import (
     BucketNotFound,
@@ -77,44 +75,31 @@ def register_copy_compose_routes(
         request: Request,
     ) -> JSONResponse:
         body = await request.json()
-        sources = body.get("sourceObjects", [])
-        if len(sources) > 32:
-            return error_response(400, "invalid", "compose accepts at most 32 sources")
-        if not sources:
-            return error_response(400, "invalid", "compose requires at least one source")
-
-        buffers: list[bytes] = []
-        for src in sources:
-            src_name = src.get("name")
-            if not src_name:
+        sources: list[ComposeSource] = []
+        for src in body.get("sourceObjects", []):
+            if not src.get("name"):
                 return error_response(400, "invalid", "source object missing name")
-            try:
-                chunk = await storage.get_object_bytes(bucket, src_name)
-            except BucketNotFound:
-                return error_response(404, "notFound", f"bucket {bucket!r} not found")
-            except ObjectNotFound:
-                return error_response(404, "notFound", f"object {src_name!r} not found")
-            buffers.append(chunk)
+            sources.append(ComposeSource(name=src["name"]))
 
-        combined = b"".join(buffers)
         dest_meta = body.get("destination", {})
-        now = rfc3339_now()
-        record = ObjectRecord(
-            bucket=bucket,
-            name=name,
-            size=len(combined),
-            generation=generations.next(bucket),
-            metageneration=1,
-            content_type=dest_meta.get("contentType", "application/octet-stream"),
-            md5_hash=compute_md5_b64(combined),
-            crc32c=compute_crc32c_b64(combined),
-            time_created=now,
-            updated=now,
-            metadata=dest_meta.get("metadata", {}),
-        )
         try:
-            await storage.put_object(record, combined)
+            record = await compose(
+                storage=storage,
+                generations=generations,
+                state_hub=state_hub,
+                bucket=bucket,
+                name=name,
+                sources=sources,
+                content_type=dest_meta.get("contentType", "application/octet-stream"),
+                user_metadata=dest_meta.get("metadata", {}),
+                preconditions=Preconditions(),
+            )
+        except InvalidCompose as e:
+            return error_response(400, "invalid", str(e))
+        except BucketNotFound:
+            return error_response(404, "notFound", f"bucket {bucket!r} not found")
+        except ObjectNotFound as e:
+            return error_response(404, "notFound", f"object {e.args[0]!r} not found")
         except ObjectCollision as e:
             return error_response(409, "conflict", str(e))
-        await publish_finalize(state_hub, record)
         return JSONResponse(object_to_api_dict(record, str(request.base_url)))

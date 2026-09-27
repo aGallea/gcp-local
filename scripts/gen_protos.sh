@@ -288,3 +288,56 @@ PY
 echo 'generated firestore:'
 ls -1 "src/gcp_local/generated/google/firestore/v1/"
 ls -1 "src/gcp_local/generated/google/firestore/admin/v1/"
+
+# Storage v2 (gRPC surface of the GCS service)
+python -m grpc_tools.protoc \
+  --proto_path=protos \
+  --proto_path="$EXTRA_PROTO_PATH" \
+  --python_out="$OUT" \
+  --pyi_out="$OUT" \
+  --grpc_python_out="$OUT" \
+  protos/google/storage/v2/storage.proto
+
+python - <<'PY'
+import pathlib, re
+out = pathlib.Path('src/gcp_local/generated/google/storage/v2')
+for p in out.glob('*.py'):
+    text = p.read_text()
+    new = re.sub(
+        r'^from google\.storage\.v2 import',
+        'from gcp_local.generated.google.storage.v2 import',
+        text,
+        flags=re.MULTILINE,
+    )
+    if new != text:
+        p.write_text(new)
+        print(f'rewrote imports in {p}')
+PY
+
+# Same descriptor-pool collision fallback as above: google-cloud-storage
+# (dev dep, used by integration tests) registers google.storage.v2.* through
+# proto-plus in its bundled _storage_v2 package.
+python - <<'PY'
+import pathlib, re
+p = pathlib.Path('src/gcp_local/generated/google/storage/v2/storage_pb2.py')
+pattern = re.compile(
+    r'^DESCRIPTOR = (_descriptor_pool\.Default\(\)\.AddSerializedFile\(.+?\))\n',
+    re.MULTILINE | re.DOTALL,
+)
+text = p.read_text()
+m = pattern.search(text)
+if m:
+    wrapper = (
+        f"try:\n"
+        f"  DESCRIPTOR = {m.group(1)}\n"
+        f"except TypeError:\n"
+        f"  DESCRIPTOR = _descriptor_pool.Default().FindFileContainingSymbol(\n"
+        f"    'google.storage.v2.Object'\n"
+        f"  )\n"
+    )
+    p.write_text(text[:m.start()] + wrapper + text[m.end():])
+    print(f'wrapped DESCRIPTOR in {p}')
+PY
+
+echo 'generated storage:'
+ls -1 "src/gcp_local/generated/google/storage/v2/"

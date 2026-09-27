@@ -37,3 +37,20 @@ def test_servicer_has_expected_methods():
         "DestroySecretVersion",
     ):
         assert hasattr(servicer_cls, m), f"missing method: {m}"
+
+
+def test_storage_v2_servicer_exposes_the_object_rpcs():
+    from gcp_local.generated.google.storage.v2 import storage_pb2, storage_pb2_grpc
+
+    servicer_cls = storage_pb2_grpc.StorageServicer
+    for m in (
+        "ListObjects",
+        "GetObject",
+        "ReadObject",
+        "DeleteObject",
+        "ComposeObject",
+        "WriteObject",
+    ):
+        assert hasattr(servicer_cls, m), f"missing method: {m}"
+    assert hasattr(storage_pb2_grpc, "add_StorageServicer_to_server")
+    assert hasattr(storage_pb2, "WriteObjectRequest")

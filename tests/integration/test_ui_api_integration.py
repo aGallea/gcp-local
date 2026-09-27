@@ -13,9 +13,13 @@ from gcp_local.services.gcs import GcsService
 
 
 @pytest.fixture
-async def integration_client(tmp_path: Path):
+async def integration_client(tmp_path: Path, unused_tcp_port_factory):
     svc = GcsService()
-    ctx = Context(persist=True, data_dir=tmp_path)
+    ctx = Context(
+        persist=True,
+        data_dir=tmp_path,
+        port_overrides={"gcs": unused_tcp_port_factory(), "gcs_grpc": unused_tcp_port_factory()},
+    )
     lc = Lifecycle([svc], ctx)
     await lc.start_all()
     try:

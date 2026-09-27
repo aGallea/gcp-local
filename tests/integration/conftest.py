@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 # Import the client libraries *before* gcp_local loads its generated *_pb2
-# modules. Both proto-plus (used by google-cloud-{secretmanager,pubsub}) and
+# modules. Both proto-plus (used by google-cloud-{secretmanager,pubsub,storage}) and
 # our protoc-generated pb2 files register the same fully-qualified symbols
 # into the default protobuf descriptor pool. Whichever arrives second wins
 # the registration race — but proto-plus calls ``pool.Add`` directly (no
@@ -13,6 +13,7 @@ from pathlib import Path
 # wrap ``AddSerializedFile`` in a ``try/except`` falling back to
 # ``FindFileContainingSymbol``. So: client libraries must load first, our
 # pb2 modules second.
+import google.cloud._storage_v2
 import google.cloud.firestore_v1
 import google.cloud.pubsub_v1
 import google.cloud.secretmanager_v1  # noqa: F401
@@ -60,6 +61,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
 
     admin_port = _free_port()
     gcs_port = _free_port()
+    gcs_grpc_port = _free_port()
     secret_manager_port = _free_port()
     bigquery_port = _free_port()
     pubsub_port = _free_port()
@@ -72,6 +74,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
         admin_port=admin_port,
         port_overrides={
             "gcs": gcs_port,
+            "gcs_grpc": gcs_grpc_port,
             "secret_manager": secret_manager_port,
             "bigquery": bigquery_port,
             "pubsub": pubsub_port,
@@ -83,6 +86,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
     try:
         await _wait_for_port(admin_port)
         await _wait_for_port(gcs_port)
+        await _wait_for_port(gcs_grpc_port)
         await _wait_for_port(secret_manager_port)
         await _wait_for_port(bigquery_port)
         await _wait_for_port(pubsub_port)
@@ -91,6 +95,7 @@ async def emulator(tmp_path: Path) -> AsyncIterator[dict[str, int]]:
         yield {
             "admin_port": admin_port,
             "gcs_port": gcs_port,
+            "gcs_grpc_port": gcs_grpc_port,
             "secret_manager_port": secret_manager_port,
             "bigquery_port": bigquery_port,
             "pubsub_port": pubsub_port,
@@ -109,6 +114,7 @@ async def emulator_endpoints(emulator: dict[str, int]) -> dict[str, str]:
     return {
         "admin": f"127.0.0.1:{emulator['admin_port']}",
         "gcs": f"127.0.0.1:{emulator['gcs_port']}",
+        "gcs_grpc": f"127.0.0.1:{emulator['gcs_grpc_port']}",
         "secret_manager": f"127.0.0.1:{emulator['secret_manager_port']}",
         "bigquery": f"127.0.0.1:{emulator['bigquery_port']}",
         "pubsub": f"127.0.0.1:{emulator['pubsub_port']}",

@@ -49,7 +49,11 @@ async def test_storage_property_exposed_after_start(tmp_path):
     from gcp_local.services.gcs import GcsService
 
     svc = GcsService()
-    ctx = Context(persist=False, data_dir=tmp_path)
+    ctx = Context(
+        persist=False,
+        data_dir=tmp_path,
+        port_overrides={"gcs": _free_port(), "gcs_grpc": _free_port()},
+    )
     await svc.start(ctx)
     try:
         assert svc.storage is not None
@@ -68,3 +72,67 @@ def test_storage_property_raises_before_start():
 
     with pytest.raises(RuntimeError, match="not started"):
         _ = svc.storage
+
+
+def test_gcs_declares_a_rest_port_and_a_named_grpc_port() -> None:
+    from gcp_local.core.service import Port
+
+    assert GcsService.default_ports == [Port(4443, "rest"), Port(4444, "grpc", name="grpc")]
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+async def test_grpc_port_serves_the_same_storage_as_rest(tmp_path: Path) -> None:
+    import grpc
+
+    from gcp_local.generated.google.storage.v2 import storage_pb2, storage_pb2_grpc
+
+    rest_port, grpc_port = _free_port(), _free_port()
+    svc = GcsService()
+    ctx = Context(
+        persist=False,
+        data_dir=tmp_path,
+        port_overrides={"gcs": rest_port, "gcs_grpc": grpc_port},
+        state_hub=StateHub(),
+    )
+    await svc.start(ctx)
+    try:
+        await svc.storage.create_bucket(BucketMeta(name="shared", time_created="t"))
+        async with grpc.aio.insecure_channel(f"127.0.0.1:{grpc_port}") as channel:
+            stub = storage_pb2_grpc.StorageStub(channel)
+            resp = await stub.ListObjects(
+                storage_pb2.ListObjectsRequest(parent="projects/_/buckets/shared")
+            )
+        assert list(resp.objects) == []
+    finally:
+        await svc.stop()
+
+
+async def test_a_second_service_on_a_taken_grpc_port_fails_to_start(tmp_path: Path) -> None:
+    grpc_port = _free_port()
+    first, second = GcsService(), GcsService()
+    await first.start(
+        Context(
+            persist=False,
+            data_dir=tmp_path,
+            port_overrides={"gcs": _free_port(), "gcs_grpc": grpc_port},
+        )
+    )
+    try:
+        with pytest.raises(RuntimeError, match="Failed to bind"):
+            await second.start(
+                Context(
+                    persist=False,
+                    data_dir=tmp_path,
+                    port_overrides={"gcs": _free_port(), "gcs_grpc": grpc_port},
+                )
+            )
+    finally:
+        await second.stop()
+        await first.stop()
