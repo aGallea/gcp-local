@@ -254,7 +254,7 @@ Every object record carries the following metadata, all of which round-trip corr
 | `metageneration` | Starts at `1`; incremented by each `PATCH` |
 | `md5Hash` | Base64-encoded MD5 over the raw bytes |
 | `crc32c` | Base64-encoded CRC32C over the raw bytes |
-| `timeCreated` | RFC 3339 timestamp set at first creation; preserved on overwrite |
+| `timeCreated` | RFC 3339 timestamp of this generation's creation; an overwrite resets it, as on real GCS |
 | `updated` | RFC 3339 timestamp updated on every write or patch |
 | `etag` | Computed as `"<generation>/<metageneration>"` |
 | `size` | Byte count |

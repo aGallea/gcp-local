@@ -475,6 +475,28 @@ async def test_write_object_with_matching_generation_overwrites(h: _Harness) -> 
     assert resp.resource.generation > gen
 
 
+async def test_write_object_overwrite_gets_a_new_generation_and_creation_time(
+    h: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stamps = iter(["2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z"])
+    monkeypatch.setattr("gcp_local.services.gcs.operations.rfc3339_now", lambda: next(stamps))
+    written = []
+    for data in (b"v1", b"v2"):
+        resp = await h.servicer.WriteObject(
+            _stream(
+                _spec_message("w.txt"),
+                _data_message(0, data),
+                _finish_message(len(data), data),
+            ),
+            _FakeContext(),
+        )
+        written.append(resp.resource)
+    first, second = written
+    assert first.generation != second.generation
+    assert second.create_time.seconds > first.create_time.seconds
+    assert second.create_time == second.update_time
+
+
 async def test_write_object_with_if_generation_not_match_on_current_fails(h: _Harness) -> None:
     gen = await h.put("w.txt", b"old")
     code, _ = await _expect_abort(

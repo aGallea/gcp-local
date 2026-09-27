@@ -62,7 +62,7 @@ Each stored object carries the following fields (defined in `models.ObjectRecord
 | `content_encoding`, `content_language`, `content_disposition`, `cache_control` | standard HTTP headers, default empty |
 | `md5_hash` | base-64 MD5 of the payload bytes (server-computed) |
 | `crc32c` | base-64 CRC32C via `google-crc32c` (server-computed) |
-| `time_created` | RFC3339 timestamp; frozen at first write, not reset on overwrite |
+| `time_created` | RFC3339 timestamp; set to now on every write, so an overwrite gets a fresh value like real GCS |
 | `updated` | RFC3339 timestamp; updated on every write and on metadata PATCH |
 | `metadata` | `dict[str, str]` — user-controlled key/value pairs (`x-goog-meta-*`) |
 | `etag` | computed field: `"<generation>/<metageneration>"` |

@@ -58,7 +58,7 @@ async def finalize_object(
         content_type=content_type,
         md5_hash=compute_md5_b64(data),
         crc32c=compute_crc32c_b64(data),
-        time_created=now if current is None else current.time_created,
+        time_created=now,
         updated=now,
         metadata=dict(user_metadata),
     )
